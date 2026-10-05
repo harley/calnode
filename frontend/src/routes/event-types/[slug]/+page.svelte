@@ -97,6 +97,7 @@
 	];
 	type Strategy = 'even' | 'priority' | 'soonest';
 	let rrStrategy = $state<Strategy>('even');
+	let blockedEmailDomains = $state('');
 
 	type Host = { user_id: string; name: string; email: string };
 	type TogetherHost = Host & { optional: boolean };
@@ -300,6 +301,7 @@
 			if (et.routing_mode === 'round_robin') { hostScope = 'people'; staffing = 'rotate'; }
 			else if (et.routing_mode === 'collective') { hostScope = 'people'; staffing = 'together'; }
 			else { hostScope = 'me'; }
+			blockedEmailDomains = (et.blocked_email_domains ?? []).join(', ');
 			rrStrategy = (['even', 'priority', 'soonest'].includes(et.rr_strategy ?? '')
 				? et.rr_strategy : 'even') as Strategy;
 			msg_confirmation = et.msg_confirmation ?? '';
@@ -355,6 +357,7 @@
 				currency: form.currency.trim().toLowerCase() || 'usd',
 				routing_mode: routingMode,
 				rr_strategy: rrStrategy,
+				blocked_email_domains: blockedEmailDomains.split(/[\s,]+/).filter(Boolean),
 				reminders,
 				// Not `|| null`: this form always saves the whole page state, so a blanked
 				// field must send '' to actually clear it. The API treats null as "leave
@@ -749,6 +752,11 @@
 					<Label for="et-future">Booking window (days)</Label>
 					<Input id="et-future" type="number" min="0" bind:value={form.max_future_days} />
 					<p class="text-xs text-muted-foreground">How far ahead people can book. 0 = unlimited</p>
+				</div>
+				<div class="space-y-1.5">
+					<Label for="et-blocked-domains">Blocked email domains</Label>
+					<Input id="et-blocked-domains" bind:value={blockedEmailDomains} placeholder="gmail.com, hotmail.com" />
+					<p class="text-xs text-muted-foreground">Separate domains with commas. These domains and their subdomains cannot book this event. Leave blank to allow all domains.</p>
 				</div>
 				<div class="space-y-1.5">
 					<Label for="et-max-active">Max active bookings per person</Label>

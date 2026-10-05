@@ -451,6 +451,7 @@ var errPaymentRequired = errors.New("this event requires payment; please book on
 // the direct booking page (book.go) always had. A future caller now gets both is_active
 // and is_public enforced by construction, not by remembering to add the check.
 type bookableEventType struct {
+	BlockedEmailDomains []string
 	AllowPhoneCall      bool
 	ID                  string
 	UserID              string
@@ -481,19 +482,23 @@ type bookableEventType struct {
 // everywhere, not just hidden from its own page.
 func (h *Handler) loadBookableEventType(ctx context.Context, slug string) (*bookableEventType, error) {
 	var et bookableEventType
+	var blockedJSON string
 	var isActive, isPublic, showTaken int
 	err := h.db.QueryRowContext(ctx, `
 		SELECT id, user_id, name, duration_minutes, slot_interval_minutes,
 		       location_type, location_value, allow_phone_call, routing_mode, rr_strategy,
 		       buffer_before_minutes, buffer_after_minutes, min_notice_minutes, max_future_days,
-		       is_active, is_public, show_taken_slots, max_active_bookings, price_cents, currency
+		       is_active, is_public, show_taken_slots, max_active_bookings, price_cents, currency, blocked_email_domains
 		FROM event_types WHERE slug = ?`, slug).
 		Scan(&et.ID, &et.UserID, &et.Name, &et.DurationMinutes, &et.SlotIntervalMinutes,
 			&et.LocationType, &et.LocationValue, &et.AllowPhoneCall, &et.RoutingMode, &et.RRStrategy,
 			&et.BufferBeforeMinutes, &et.BufferAfterMinutes, &et.MinNoticeMinutes, &et.MaxFutureDays,
-			&isActive, &isPublic, &showTaken, &et.MaxActiveBookings, &et.PriceCents, &et.Currency)
+			&isActive, &isPublic, &showTaken, &et.MaxActiveBookings, &et.PriceCents, &et.Currency, &blockedJSON)
 	if err != nil || isActive == 0 || isPublic == 0 {
 		return nil, errEventTypeNotFound
+	}
+	if err := json.Unmarshal([]byte(blockedJSON), &et.BlockedEmailDomains); err != nil {
+		return nil, err
 	}
 	et.ShowTakenSlots = showTaken != 0
 	return &et, nil
@@ -519,6 +524,9 @@ func (h *Handler) createBookingForSlug(ctx context.Context, slug string, startAt
 
 	et, err := h.loadBookableEventType(ctx, slug)
 	if err != nil {
+		return nil, err
+	}
+	if err := booking.CheckEmailDomain(organizer.Email, et.BlockedEmailDomains); err != nil {
 		return nil, err
 	}
 	// Paid events require the Stripe Checkout flow (booking page only) — agents/assistant
@@ -804,6 +812,11 @@ func (h *Handler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := booking.CheckEmailDomain(req.Email, et.BlockedEmailDomains); err != nil {
+		h.writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+
 	// Per-email throttle: cap how many bookings one email can create across the
 	// workspace in a rolling hour, independent of IP — backstops the per-IP rate
 	// limit against a single identity spamming via rotating IPs. Enforced inside
@@ -902,6 +915,10 @@ func (h *Handler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 		MaxBookingsPerHour:  maxBookingsPerEmailPerHour,
 	})
 	if err != nil {
+		if errors.Is(err, booking.ErrEmailDomainBlocked) {
+			h.writeError(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
 		if errors.Is(err, booking.ErrDoubleBooked) {
 			h.writeError(w, http.StatusConflict, "this slot is no longer available")
 			return

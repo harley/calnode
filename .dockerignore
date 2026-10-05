@@ -40,3 +40,5 @@ calnode.exe
 **/.svelte-kit
 **/build
 fly.toml
+.screenshots
+.git
