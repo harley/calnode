@@ -6,7 +6,8 @@ is Calnode v0.10.1; the CoderPush addition is an editable email-domain policy.
 ## Runtime
 
 - Railway project/service: `calnode`, production, Singapore, one replica.
-- Build with the root Dockerfile. Set `VERSION` and `COMMIT` to identify the release.
+- Build with the root Dockerfile. Set `VERSION` to identify the release. GitHub
+  deployments stamp Railway's commit SHA automatically; set `COMMIT` for CLI builds.
 - `BASE_URL=https://book.coderpush.com`, `PORT=8080`.
 - Mount the persistent volume at `/data`. Set `DATABASE_URL=sqlite:///data/calnode.db`
   and `DATA_DIR=/data` so the database and uploaded branding survive deployment.
