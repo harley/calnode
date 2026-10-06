@@ -21,6 +21,23 @@ Keep credentials outside the repository. The local owner/deployment credentials
 are stored with mode 0600 at `~/.config/calnode/coderpush/secrets.json`.
 Resend sending credentials are configured in Calnode's encrypted email settings.
 
+## Google Calendar
+
+The Google Cloud project is `coderpush-bookings`, owned by `coderpush.com`.
+Calendar API is enabled and the OAuth audience is Internal. The web client uses
+only `https://book.coderpush.com/v1/auth/callback` and
+`https://book.coderpush.com/v1/calendar/callback`. Its credentials are stored in
+Calnode's encrypted Google settings and the protected local configuration.
+
+Calendar consent requests event management, free/busy, read-only calendar lists
+and read-only calendar metadata. It does not request calendar sharing or deletion.
+These scopes cover the provider's calls: [event management](https://developers.google.com/workspace/calendar/api/v3/reference/events/insert),
+[availability](https://developers.google.com/workspace/calendar/api/v3/reference/freebusy/query),
+[calendar selection](https://developers.google.com/workspace/calendar/api/v3/reference/calendarList/list),
+and [account metadata](https://developers.google.com/workspace/calendar/api/v3/reference/calendars/get).
+Google sign-in is separate from Calendar consent. Each host must connect their
+own account and select the calendars to check and the booking destination.
+
 ## Booking configuration
 
 Create team members through invitations, then add them to the Sales team and the

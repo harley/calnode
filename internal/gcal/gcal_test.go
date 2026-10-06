@@ -3,6 +3,7 @@ package gcal
 import (
 	"context"
 	"database/sql"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -395,5 +396,31 @@ func TestAuthURL_containsExpectedParams(t *testing.T) {
 	}
 	if !strings.Contains(u, "offline") {
 		t.Errorf("AuthURL %q missing access_type=offline", u)
+	}
+	parsed, err := url.Parse(u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := parsed.Query()
+	if query.Get("prompt") != "consent" {
+		t.Error("calendar authorization must request consent to obtain a refresh token")
+	}
+	scopes := strings.Fields(query.Get("scope"))
+	want := map[string]bool{
+		"https://www.googleapis.com/auth/calendar.events":                false,
+		"https://www.googleapis.com/auth/calendar.events.freebusy":       false,
+		"https://www.googleapis.com/auth/calendar.calendarlist.readonly": false,
+		"https://www.googleapis.com/auth/calendar.calendars.readonly":    false,
+	}
+	for _, scope := range scopes {
+		if _, allowed := want[scope]; !allowed {
+			t.Errorf("unexpected calendar permission %q", scope)
+		}
+		want[scope] = true
+	}
+	for scope, present := range want {
+		if !present {
+			t.Errorf("missing required booking permission %q", scope)
+		}
 	}
 }
