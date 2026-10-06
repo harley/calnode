@@ -213,6 +213,12 @@ func (h *Handler) ReassignBooking(w http.ResponseWriter, r *http.Request) {
 			h.applyInviteDelivery(ctx, &d, inviteMode, newHostID)
 			d.ICSSequence = int(time.Now().Unix())
 		}
+		if answers, err := h.bookingAnswersForEmail(ctx, bCopy.ID); err != nil {
+			h.logger.Error("reassign: load booking answers", "error", err, "booking_id", bCopy.ID)
+		} else {
+			d.Answers = answers
+		}
+
 		prefs := h.hostPrefsOrDefault(ctx, bCopy.ID, newHostID)
 		if prefs.NotifyConfirmation {
 			if err := mailer.SendConfirmationToAttendee(ctx, h.mailer, d); err != nil {

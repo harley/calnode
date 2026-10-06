@@ -90,6 +90,10 @@ var htmlConfirmHost = content(`{{define "content"}}
 <tr>` + labelTD + `When</td>` + valueTD + `{{.WhenFmt}}</td></tr>
 {{if .LocationValue}}<tr>` + labelTD + `Location</td><td style="padding:5px 0;vertical-align:top;word-break:break-word;">{{.LocationValue}}</td></tr>{{end}}
 {{template "cardClose" .}}
+{{if .Answers}}<div style="margin:16px 0;padding-top:16px;border-top:1px solid #e4e4e7;font-size:14px;">
+<p style="margin:0 0 8px;font-weight:600;">Booking answers</p>
+{{range .Answers}}<p style="margin:0 0 12px;"><strong>{{.Label}}</strong><br><span style="white-space:pre-wrap;word-break:break-word;">{{.Value}}</span></p>{{end}}
+</div>{{end}}
 {{template "ref" .}}
 {{end}}`)
 
