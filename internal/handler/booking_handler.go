@@ -956,7 +956,7 @@ func (h *Handler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 			h.writeError(w, http.StatusServiceUnavailable, "payments are temporarily unavailable")
 			return
 		}
-		checkoutURL, err := h.startBookingCheckout(r.Context(), sc, b.ID, et.PriceCents, et.Currency, et.Name, req.EventTypeSlug, req.Email)
+		checkoutURL, err := h.startBookingCheckout(r.Context(), sc, b.ID, et.PriceCents, et.Currency, et.Name, req.Email)
 		if err != nil {
 			h.logger.ErrorContext(r.Context(), "create booking: start checkout", "error", err, "booking_id", b.ID)
 			_ = h.bookingSvc.CancelByID(r.Context(), b.ID, "checkout failed")

@@ -2,8 +2,11 @@ package handler
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/calnode/calnode/internal/stripe"
@@ -15,19 +18,21 @@ const checkoutHoldWindow = 31 * time.Minute
 
 // startBookingCheckout creates a Stripe Checkout session for a held (pending) booking, marks
 // the booking pending_payment, and returns the hosted Checkout URL to redirect the booker to.
-func (h *Handler) startBookingCheckout(ctx context.Context, sc *stripe.Client, bookingID string, priceCents int, currency, productName, slug, email string) (string, error) {
+func (h *Handler) startBookingCheckout(ctx context.Context, sc *stripe.Client, bookingID string, priceCents int, currency, productName, email string) (string, error) {
 	if currency == "" {
 		currency = "usd"
 	}
 	base := h.publicURL()
+	// The booking ID is stable when an owner renames the event during Checkout.
+	returnURL := base + "/book/return/" + bookingID
 	sess, err := sc.CreateCheckoutSession(ctx, stripe.CheckoutParams{
 		AmountCents:   int64(priceCents),
 		Currency:      currency,
 		ProductName:   productName,
 		CustomerEmail: email,
 		// Stripe substitutes {CHECKOUT_SESSION_ID}; the page shows a "payment received" banner.
-		SuccessURL: base + "/book/" + slug + "?paid=1&session_id={CHECKOUT_SESSION_ID}",
-		CancelURL:  base + "/book/" + slug,
+		SuccessURL: returnURL + "?paid=1&session_id={CHECKOUT_SESSION_ID}",
+		CancelURL:  returnURL,
 		ExpiresAt:  time.Now().Add(checkoutHoldWindow),
 		Metadata:   map[string]string{"booking_id": bookingID},
 	})
@@ -40,6 +45,37 @@ func (h *Handler) startBookingCheckout(ctx context.Context, sc *stripe.Client, b
 		return "", err
 	}
 	return sess.URL, nil
+}
+
+// BookingReturn sends a customer back to the event's current public URL after
+// Stripe Checkout. Its URL uses a stable booking ID because the slug may change
+// while Checkout is open.
+func (h *Handler) BookingReturn(w http.ResponseWriter, r *http.Request) {
+	var slug string
+	err := h.db.QueryRowContext(r.Context(), `
+		SELECT et.slug FROM bookings b
+		JOIN event_types et ON et.id = b.event_type_id
+		WHERE b.id = ?`, r.PathValue("id")).Scan(&slug)
+	if errors.Is(err, sql.ErrNoRows) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "booking return: load event type", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	target := "/book/" + url.PathEscape(slug)
+	if r.URL.Query().Get("paid") == "1" {
+		query := url.Values{"paid": {"1"}}
+		if sessionID := r.URL.Query().Get("session_id"); sessionID != "" {
+			query.Set("session_id", sessionID)
+		}
+		target += "?" + query.Encode()
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	http.Redirect(w, r, target, http.StatusSeeOther)
 }
 
 // StripeWebhook handles POST /v1/stripe/webhook — Stripe's payment notifications. Public, but
