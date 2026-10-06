@@ -54,11 +54,13 @@ enforce the policy on the server. Duplicated events inherit it.
 
 ## Upgrade and recovery
 
-This fork is pinned to v0.10.1. Do not switch the service to the upstream `edge`
-image or auto-merge upstream main. Custom migrations use versions 68, 69, and 70; upstream
-main already has a different version 68. Before an upgrade, reconcile the migration
-history and test the upgrade against a restored copy of the database. Renaming a
-migration after it has run does not repair that history.
+This fork is based on v0.10.1. Do not switch the service to the upstream `edge`
+image or auto-merge a later upstream main. CoderPush migrations 68, 69, and 70
+have already run in production and keep their original versions. The upstream
+invite-delivery and RSVP migrations, originally numbered 68 and 69, are included
+as 71 and 72 so they run after the CoderPush history. This migration sequence is
+for the CoderPush database lineage, not an upstream database that already ran
+upstream versions 68 and 69. Test future upgrades against a restored database.
 
 For recovery, stop new bookings, preserve the current volume, restore a known-good
 Railway backup, and deploy its matching code revision with the original encryption
