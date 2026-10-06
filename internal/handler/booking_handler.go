@@ -1354,13 +1354,13 @@ func (h *Handler) dispatchBookingConfirmation(b *booking.Booking, in bookingConf
 	meetURL, autoGenMeet, livekitHostURL := h.mintMeetingLink(ctx, b, in, &bData, hosts)
 	primaryPrefs, hostFailed := h.createHostEventsAndNotify(ctx, b, in, &bData, hosts, meetURL, autoGenMeet, livekitHostURL)
 
-	// Attendee confirmation, once. "With:" names the primary host; gated on the
-	// primary host's notification preference (matches prior behaviour).
+	// Attendee confirmation, once. "With:" names the primary host. In Calnode
+	// invite mode this email is the booker's only calendar invitation.
 	bData.HostName, bData.HostEmail = primaryHost(hosts).Name, primaryHost(hosts).Email
 	h.applyInviteDelivery(ctx, &bData, b.InviteDelivery, b.HostID)
 	bData.ICSSequence = int(b.UpdatedAt.Unix())
 	confirmFailed := hostFailed
-	if primaryPrefs.NotifyConfirmation {
+	if primaryPrefs.NotifyConfirmation || b.InviteDelivery == booking.InviteByCalnode {
 		if err := sendWithRetry(ctx, h.logger, b.ID, "attendee", func() error {
 			return mailer.SendConfirmationToAttendee(ctx, h.mailer, bData)
 		}); err != nil {
@@ -1816,7 +1816,7 @@ func (h *Handler) cancelSideEffects(b booking.Booking) {
 	}
 	h.applyInviteDelivery(ctx, &d, b.InviteDelivery, b.HostID)
 	d.ICSSequence = int(b.UpdatedAt.Unix())
-	if primaryPrefs.NotifyCancellation {
+	if primaryPrefs.NotifyCancellation || b.InviteDelivery == booking.InviteByCalnode {
 		if err := mailer.SendCancellationToAttendee(ctx, h.mailer, d); err != nil {
 			h.logger.Error("booking cancellation email (attendee)", "error", err, "booking_id", b.ID)
 		}

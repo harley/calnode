@@ -220,7 +220,7 @@ func (h *Handler) ReassignBooking(w http.ResponseWriter, r *http.Request) {
 			d.ICSSequence = int(time.Now().Unix())
 		}
 		prefs := h.hostPrefsOrDefault(ctx, bCopy.ID, newHostID)
-		if prefs.NotifyConfirmation {
+		if prefs.NotifyConfirmation || inviteMode == booking.InviteByCalnode {
 			if err := mailer.SendConfirmationToAttendee(ctx, h.mailer, d); err != nil {
 				h.logger.Error("reassign: email attendee", "error", err, "booking_id", bCopy.ID)
 			}
