@@ -270,7 +270,7 @@
 	let testError   = $state<Partial<Record<MsgKey, string>>>({});
 
 	let allowPhoneCall = $state(false);
-	const slug = $page.params.slug;
+	const slug = $derived($page.params.slug);
 
 	async function loadET() {
 		etError = '';
@@ -398,7 +398,6 @@
 			// leaving it in history is a back button that breaks.
 			if (effSlug !== slug) {
 				await goto(`${base}/event-types/${effSlug}`, { replaceState: true });
-				return;
 			}
 			await loadET();
 			await loadHosts();
@@ -590,9 +589,9 @@
 					<Input id="et-slug" bind:value={form.slug} />
 				</div>
 				<p class="text-xs text-muted-foreground">
-					Editable until the first booking, after which the links are already in
-					circulation. Mainly useful right after duplicating, where the copy arrives
-					with <code>-copy</code> on the end.
+					You can change this link even after bookings exist. Old booking URLs stop
+					working, so update shared links and embeds. Existing bookings and their
+					manage links keep working.
 				</p>
 			</div>
 			<div class="space-y-1.5">

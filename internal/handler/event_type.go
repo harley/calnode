@@ -737,16 +737,9 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// The slug is the public booking URL, so renaming one that is already in circulation
-	// breaks every link to it: an invitation in somebody's inbox, a page embedding the
-	// widget, a QR code on a card. It is allowed only while the event type has no
-	// bookings, which is exactly the case that needs it - a fresh duplicate arrives as
-	// "<slug>-copy" and there is otherwise no way to give it a real name (#22).
-	//
-	// "No bookings" rather than "not yet active": a link can be shared before anyone
-	// books, but a booking is the first evidence the URL actually reached someone, and it
-	// is the check we can make honestly. Cancelled ones count - the manage link in that
-	// booker's confirmation email still resolves through the slug.
+	// Renaming changes the public booking URL without redirecting the old one.
+	// Existing bookings and their token-based manage links use stable IDs, so they
+	// remain valid. Owners must update shared URLs and embeds after a rename.
 	effectiveSlug := slug
 	if req.Slug != nil {
 		newSlug := slugify(*req.Slug)
@@ -756,19 +749,6 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if newSlug != slug {
-			var bookings int
-			if err := h.db.QueryRowContext(r.Context(),
-				`SELECT COUNT(*) FROM bookings WHERE event_type_id = ?`, etID).Scan(&bookings); err != nil {
-				h.logger.ErrorContext(r.Context(), "patch event type: count bookings", "error", err)
-				h.writeError(w, http.StatusInternalServerError, "internal error")
-				return
-			}
-			if bookings > 0 {
-				h.writeError(w, http.StatusConflict,
-					"cannot change the slug of an event type that already has bookings - "+
-						"its booking links are already in circulation")
-				return
-			}
 			set("slug", newSlug)
 			effectiveSlug = newSlug
 		}
