@@ -263,7 +263,7 @@ func (h *Handler) PatchEmailSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if req.EmailFromName == "" {
-		req.EmailFromName = "Calnode"
+		req.EmailFromName = "Book with CoderPush"
 	}
 
 	boolToInt := func(b bool) int {
@@ -421,8 +421,8 @@ func (h *Handler) TestEmailConnection(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.mailer.Send(ctx, mailer.Message{
 		To:      []string{user.Email},
-		Subject: "[TEST] Calnode email configuration",
-		Text:    "This is a test email from Calnode. If you received this, your email settings are working correctly.",
+		Subject: "[TEST] CoderPush email configuration",
+		Text:    "This is a test email from CoderPush. If you received this, your email settings are working correctly.",
 	}); err != nil {
 		h.logger.ErrorContext(r.Context(), "email connection test: send",
 			"transport", string(transport), "error", err)

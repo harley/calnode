@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/calnode/calnode/internal/calendar"
 	"github.com/calnode/calnode/internal/gcal"
@@ -43,36 +44,74 @@ func LoadGoogleSettingsFromDB(db *sql.DB, encKey [32]byte) (*GoogleOAuthConfig, 
 	return &GoogleOAuthConfig{ClientID: clientID, ClientSecret: clientSecret}, nil
 }
 
-// GetGoogleSettings handles GET /v1/settings/google (admin only).
+// GetGoogleSettings returns effective credentials without secrets and the saved admission policy.
 func (h *Handler) GetGoogleSettings(w http.ResponseWriter, r *http.Request) {
 	if _, ok := h.requireAdmin(w, r); !ok {
 		return
 	}
-	var clientID, secretEnc string
-	err := h.db.QueryRowContext(r.Context(), `
-		SELECT google_client_id, google_client_secret_enc
-		FROM server_settings WHERE id = 1`).
-		Scan(&clientID, &secretEnc)
-	if err != nil && err != sql.ErrNoRows {
-		h.logger.ErrorContext(r.Context(), "google settings: query", "error", err)
-		h.writeError(w, http.StatusInternalServerError, "internal error")
+	var clientID, secretEnc, rawDomains string
+	var enabled bool
+	err := h.db.QueryRowContext(r.Context(), `SELECT google_client_id, google_client_secret_enc, google_signup_enabled, google_signup_domains FROM server_settings WHERE id = 1`).Scan(&clientID, &secretEnc, &enabled, &rawDomains)
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, "could not load Google settings")
+		return
+	}
+	secretSet := secretEnc != ""
+	if ga := h.getGoogleAuth(); ga != nil {
+		clientID, secretSet = ga.ClientID, ga.ClientSecret != ""
+	}
+	domains := []string{}
+	if err := json.Unmarshal([]byte(rawDomains), &domains); err != nil {
+		h.writeError(w, http.StatusInternalServerError, "could not load Google signup policy")
 		return
 	}
 	h.writeJSON(w, http.StatusOK, map[string]any{
-		"client_id":         clientID,
-		"client_secret_set": secretEnc != "",
-		"configured":        clientID != "",
-		// base_url is the identity host the server builds OAuth redirect URIs
-		// from (see PatchGoogleSettings); the setup UI renders the exact URIs to
-		// register in Google Cloud so they always match what we send.
-		"base_url": h.baseURL,
+		"client_id": clientID, "client_secret_set": secretSet, "configured": clientID != "",
+		"base_url": h.baseURL, "signup_enabled": enabled, "signup_domains": domains,
 	})
 }
 
-// PatchGoogleSettings handles PATCH /v1/settings/google (admin only).
-// Saves credentials to the DB and hot-reloads the gcal and Google auth clients
-// so changes take effect immediately without a server restart.
-// If client_secret is omitted or empty the existing stored secret is kept.
+// normalizeGoogleDomains accepts exact DNS domains, never URLs or wildcard rules.
+func normalizeGoogleDomains(values []string) ([]string, error) {
+	if len(values) > 20 {
+		return nil, fmt.Errorf("at most 20 signup domains are allowed")
+	}
+	domains := []string{}
+	seen := map[string]bool{}
+	for _, value := range values {
+		d := strings.ToLower(strings.TrimSpace(value))
+		labels := strings.Split(d, ".")
+		valid := len(d) <= 253 && len(labels) >= 2
+		for _, label := range labels {
+			if len(label) == 0 || len(label) > 63 || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+				valid = false
+				break
+			}
+			for _, c := range label {
+				if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-') {
+					valid = false
+				}
+			}
+		}
+		alpha := false
+		for _, c := range labels[len(labels)-1] {
+			if c >= 'a' && c <= 'z' {
+				alpha = true
+			}
+		}
+		if !valid || !alpha {
+			return nil, fmt.Errorf("signup domains must be exact DNS domains")
+		}
+		if !seen[d] {
+			domains = append(domains, d)
+			seen[d] = true
+		}
+	}
+	return domains, nil
+}
+
+// PatchGoogleSettings preserves omitted credential fields, including env-backed
+// credentials on policy-only writes. Empty client_id explicitly clears clients.
 func (h *Handler) PatchGoogleSettings(w http.ResponseWriter, r *http.Request) {
 	if _, ok := h.requireAdmin(w, r); !ok {
 		return
@@ -81,101 +120,112 @@ func (h *Handler) PatchGoogleSettings(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusServiceUnavailable, "not available in the demo")
 		return
 	}
+	h.googleSettingsMu.Lock()
+	defer h.googleSettingsMu.Unlock()
 	r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
 	var req struct {
-		ClientID     string `json:"client_id"`
-		ClientSecret string `json:"client_secret"`
+		ClientID      *string   `json:"client_id"`
+		ClientSecret  *string   `json:"client_secret"`
+		SignupEnabled *bool     `json:"signup_enabled"`
+		SignupDomains *[]string `json:"signup_domains"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-
-	if req.ClientID == "" {
-		// Clearing credentials — wipe both columns so the encrypted secret
-		// doesn't linger in the DB after the admin removes Google OAuth.
-		if _, err := h.db.ExecContext(r.Context(), `
-			UPDATE server_settings SET
-			  google_client_id = '', google_client_secret_enc = '',
-			  updated_at = datetime('now')
-			WHERE id = 1`); err != nil {
-			h.logger.ErrorContext(r.Context(), "google settings: clear", "error", err)
-			h.writeError(w, http.StatusInternalServerError, "internal error")
-			return
-		}
-		h.SetCalendar(nil)
-		h.authMu.Lock()
-		h.googleAuth = nil
-		h.authMu.Unlock()
-		h.GetGoogleSettings(w, r)
+	tx, err := h.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, "could not save Google settings")
 		return
 	}
-
-	if req.ClientSecret != "" {
-		enc, err := secret.Encrypt(h.encKey, req.ClientSecret)
-		if err != nil {
-			h.logger.ErrorContext(r.Context(), "google settings: encrypt secret", "error", err)
-			h.writeError(w, http.StatusInternalServerError, "internal error")
-			return
-		}
-		if _, err = h.db.ExecContext(r.Context(), `
-			UPDATE server_settings SET
-			  google_client_id = ?, google_client_secret_enc = ?,
-			  updated_at = datetime('now')
-			WHERE id = 1`, req.ClientID, enc); err != nil {
-			h.logger.ErrorContext(r.Context(), "google settings: update", "error", err)
-			h.writeError(w, http.StatusInternalServerError, "internal error")
-			return
-		}
-	} else {
-		if _, err := h.db.ExecContext(r.Context(), `
-			UPDATE server_settings SET
-			  google_client_id = ?,
-			  updated_at = datetime('now')
-			WHERE id = 1`, req.ClientID); err != nil {
-			h.logger.ErrorContext(r.Context(), "google settings: update (keep secret)", "error", err)
-			h.writeError(w, http.StatusInternalServerError, "internal error")
-			return
-		}
+	defer tx.Rollback() //nolint:errcheck
+	var clientID, secretEnc, rawDomains string
+	var enabled bool
+	if err := tx.QueryRowContext(r.Context(), `SELECT google_client_id, google_client_secret_enc, google_signup_enabled, google_signup_domains FROM server_settings WHERE id = 1`).Scan(&clientID, &secretEnc, &enabled, &rawDomains); err != nil {
+		h.writeError(w, http.StatusInternalServerError, "could not load Google settings")
+		return
 	}
-
-	// Hot-reload: resolve the active secret and reinitialise gcal + Google auth
-	// so changes take effect without a server restart.
-	resolvedSecret := req.ClientSecret
-	if resolvedSecret == "" {
-		var secretEnc string
-		if err := h.db.QueryRowContext(r.Context(),
-			`SELECT google_client_secret_enc FROM server_settings WHERE id = 1`).
-			Scan(&secretEnc); err != nil {
-			h.logger.ErrorContext(r.Context(), "google settings: re-read secret", "error", err)
-			h.writeError(w, http.StatusInternalServerError, "internal error")
+	if req.SignupEnabled != nil {
+		enabled = *req.SignupEnabled
+	}
+	if req.SignupDomains != nil {
+		domains, err := normalizeGoogleDomains(*req.SignupDomains)
+		if err != nil {
+			h.writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		if secretEnc != "" {
-			var decErr error
-			resolvedSecret, decErr = secret.Decrypt(h.encKey, secretEnc)
-			if decErr != nil {
-				h.logger.ErrorContext(r.Context(), "google settings: decrypt existing secret", "error", decErr)
-				h.writeError(w, http.StatusInternalServerError, "internal error")
-				return
+		encoded, _ := json.Marshal(domains)
+		rawDomains = string(encoded)
+	}
+	var domains []string
+	if err := json.Unmarshal([]byte(rawDomains), &domains); err != nil {
+		h.writeError(w, http.StatusInternalServerError, "invalid stored signup policy")
+		return
+	}
+	if enabled && len(domains) == 0 {
+		h.writeError(w, http.StatusBadRequest, "enabled signup requires an allowed domain")
+		return
+	}
+	credentialsChanged := req.ClientID != nil || (req.ClientSecret != nil && *req.ClientSecret != "")
+	var resolvedSecret string
+	var svc *calendar.Service
+	if credentialsChanged {
+		// A secret-only update of env credentials intentionally saves the effective ID.
+		if clientID == "" {
+			if ga := h.getGoogleAuth(); ga != nil {
+				clientID, resolvedSecret = ga.ClientID, ga.ClientSecret
+			}
+		}
+		if req.ClientID != nil {
+			clientID = strings.TrimSpace(*req.ClientID)
+		}
+		if clientID == "" {
+			secretEnc, resolvedSecret = "", ""
+		} else {
+			if req.ClientSecret != nil && *req.ClientSecret != "" {
+				resolvedSecret = *req.ClientSecret
+			} else if secretEnc != "" {
+				resolvedSecret, err = secret.Decrypt(h.encKey, secretEnc)
+				if err != nil {
+					h.writeError(w, http.StatusInternalServerError, "could not decrypt Google credentials")
+					return
+				}
+			}
+			if resolvedSecret != "" {
+				if secretEnc == "" || (req.ClientSecret != nil && *req.ClientSecret != "") {
+					secretEnc, err = secret.Encrypt(h.encKey, resolvedSecret)
+				}
+				if err != nil {
+					h.writeError(w, http.StatusInternalServerError, "could not encrypt Google credentials")
+					return
+				}
+				gc, err := gcal.New(h.db, clientID, resolvedSecret, h.baseURL+"/v1/calendar/callback", hex.EncodeToString(h.encKey[:]))
+				if err != nil {
+					h.writeError(w, http.StatusInternalServerError, "failed to initialize calendar client")
+					return
+				}
+				svc = calendar.NewService(h.db)
+				svc.Register(gc)
 			}
 		}
 	}
-
-	if resolvedSecret != "" {
-		encKeyHex := hex.EncodeToString(h.encKey[:])
-		gc, err := gcal.New(h.db, req.ClientID, resolvedSecret, h.baseURL+"/v1/calendar/callback", encKeyHex)
-		if err != nil {
-			h.logger.ErrorContext(r.Context(), "google settings: hot-reload gcal failed", "error", err)
-			h.writeError(w, http.StatusInternalServerError, "failed to initialize calendar client")
-			return
-		}
-		svc := calendar.NewService(h.db)
-		svc.Register(gc)
-		h.SetCalendar(svc)
-		h.SetGoogleAuth(req.ClientID, resolvedSecret, h.baseURL+"/v1/auth/callback", h.secureCookie)
-		h.logger.Info("google settings: credentials updated and gcal hot-reloaded")
+	if _, err := tx.ExecContext(r.Context(), `UPDATE server_settings SET google_client_id = ?, google_client_secret_enc = ?, google_signup_enabled = ?, google_signup_domains = ?, updated_at = datetime('now') WHERE id = 1`, clientID, secretEnc, enabled, rawDomains); err != nil {
+		h.writeError(w, http.StatusInternalServerError, "could not save Google settings")
+		return
 	}
-
+	if err := tx.Commit(); err != nil {
+		h.writeError(w, http.StatusInternalServerError, "could not save Google settings")
+		return
+	}
+	if credentialsChanged {
+		h.SetCalendar(svc)
+		if clientID == "" {
+			h.authMu.Lock()
+			h.googleAuth, h.googleVerifier = nil, nil
+			h.authMu.Unlock()
+		} else {
+			h.SetGoogleAuth(clientID, resolvedSecret, h.baseURL+"/v1/auth/callback", h.secureCookie)
+		}
+	}
 	h.GetGoogleSettings(w, r)
 }

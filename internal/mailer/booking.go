@@ -39,7 +39,7 @@ type BookingData struct {
 	AttachICS   bool
 	ICSSequence int
 	// Branding — instance-wide, threaded in by the handler. BrandName is the
-	// wordmark/footer name (falls back to "Calnode" when empty); LogoURL is an
+	// wordmark/footer name (falls back to "Book with CoderPush" when empty); LogoURL is an
 	// optional absolute https image shown in the HTML email header.
 	BrandName     string
 	LogoURL       string
@@ -86,7 +86,7 @@ func (d BookingData) Brand() string {
 	if d.BrandName != "" {
 		return d.BrandName
 	}
-	return "Calnode"
+	return "Book with CoderPush"
 }
 
 // LogoPx is the email logo height in px, defaulting to 28 when unset.
@@ -459,7 +459,7 @@ Location: {{.LocationValue}}{{end}}
 
 Booking reference: {{.BookingID}}
 
-— Calnode
+— {{.Brand}}
 `))
 
 var cancelOrgTmpl = template.Must(template.New("cancel-org").Parse(
@@ -495,7 +495,7 @@ Reason:   {{.CancellationReason}}{{end}}
 
 Booking reference: {{.BookingID}}
 
-— Calnode
+— {{.Brand}}
 `))
 
 var rescheduleOrgTmpl = template.Must(template.New("reschedule-org").Parse(
@@ -539,7 +539,7 @@ Location: {{.LocationValue}}{{end}}
 
 Booking reference: {{.BookingID}}
 
-— Calnode
+— {{.Brand}}
 `))
 
 var reminderOrgTmpl = template.Must(template.New("reminder-org").Parse(

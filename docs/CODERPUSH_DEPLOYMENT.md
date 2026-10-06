@@ -55,7 +55,7 @@ enforce the policy on the server. Duplicated events inherit it.
 ## Upgrade and recovery
 
 This fork is pinned to v0.10.1. Do not switch the service to the upstream `edge`
-image or auto-merge upstream main. The custom migration uses version 68; upstream
+image or auto-merge upstream main. Custom migrations use versions 68, 69, and 70; upstream
 main already has a different version 68. Before an upgrade, reconcile the migration
 history and test the upgrade against a restored copy of the database. Renaming a
 migration after it has run does not repair that history.
@@ -73,3 +73,24 @@ Policy tests cover normalization, quoted local parts, subdomains, rejection with
 persisting a booking, editable configuration, creation, copying, and clearing it.
 After deployment, verify the release through `/version` and test the public booking
 flow using a clearly labelled test event, then cancel the test booking.
+
+## Google Workspace self-service
+
+Enable self-service in Settings → Google OAuth and allow the exact `coderpush.com`
+domain. The same policy is available through GET/PATCH `/v1/settings/google` as
+`signup_enabled` and `signup_domains`. Omitted credential fields are preserved.
+The default policy is disabled; no company or employee identities are hardcoded.
+
+Before enabling signup after this upgrade, sign in as the known owner once to bind
+its Google subject. Existing unbound users retain the old email-based trust for
+that first binding; the application cannot distinguish a recycled email at that
+point. Later logins bind to the signed stable Google subject and reject conflicts.
+
+Staff open `/admin/login` and use their company Google account. They join as Members
+without teams, API keys, working hours, or Calendar access. Confirm the timezone in
+Profile, connect Calendar with separate consent, set Availability, then create an
+event type. Sales remains inactive until its chosen hosts are ready.
+
+Disabling signup stops new accounts only. Archive a user to revoke existing local
+access. Workspace suspension alone does not revoke existing app sessions; local
+sessions can last 30 days. Google Directory synchronization is not implemented.

@@ -164,7 +164,7 @@
 	onConfirm={doDelete}
 />
 
-<svelte:head><title>Webhooks — Calnode</title></svelte:head>
+<svelte:head><title>Webhooks — Book with CoderPush</title></svelte:head>
 
 <div class="mb-8 flex items-center justify-between">
 	<div>

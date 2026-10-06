@@ -39,12 +39,25 @@ func (h *Handler) AuthStatus(w http.ResponseWriter, r *http.Request) {
 	h.db.QueryRowContext(r.Context(),
 		`SELECT COUNT(*) FROM users WHERE email_login = 1`).Scan(&emailLoginCount)
 
+	var signupEnabled bool
+	var rawDomains string
+	domains := []string{}
+	if err := h.db.QueryRowContext(r.Context(), `SELECT google_signup_enabled, google_signup_domains FROM server_settings WHERE id = 1`).Scan(&signupEnabled, &rawDomains); err != nil {
+		h.writeError(w, http.StatusServiceUnavailable, "database unavailable")
+		return
+	}
+	if err := json.Unmarshal([]byte(rawDomains), &domains); err != nil {
+		h.writeError(w, http.StatusServiceUnavailable, "invalid signup policy")
+		return
+	}
 	resp := map[string]any{
-		"claimed":         userCount > 0,
-		"email_login":     emailLoginCount > 0,
-		"providers":       providers,
-		"smtp_configured": h.isEmailEnabled(),
-		"demo_mode":       h.demoMode,
+		"google_signup_enabled": signupEnabled && h.getGoogleAuth() != nil,
+		"google_signup_domains": domains,
+		"claimed":               userCount > 0,
+		"email_login":           emailLoginCount > 0,
+		"providers":             providers,
+		"smtp_configured":       h.isEmailEnabled(),
+		"demo_mode":             h.demoMode,
 	}
 	if h.demoMode {
 		resp["next_reset_at"] = h.getDemoNextResetAt().UTC().Format(time.RFC3339)

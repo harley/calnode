@@ -185,6 +185,8 @@ export type EmailSettings = {
 };
 
 export type GoogleSettings = {
+	signup_enabled: boolean;
+	signup_domains: string[];
 	client_id: string;
 	client_secret_set: boolean;
 	configured: boolean;

@@ -126,7 +126,7 @@
 	onConfirm={doDelete}
 />
 
-<svelte:head><title>Event Types — Calnode</title></svelte:head>
+<svelte:head><title>Event Types — Book with CoderPush</title></svelte:head>
 
 <div class="mb-8 flex items-center justify-between">
 	<div>

@@ -61,6 +61,11 @@ func (h *Handler) finishOAuthLogin(w http.ResponseWriter, r *http.Request, email
 		http.Redirect(w, r, "/admin/login?error=archived", http.StatusFound)
 		return
 	}
+	h.finishOAuthSession(w, r, userID)
+}
+
+// finishOAuthSession is shared after each provider resolves its own identity.
+func (h *Handler) finishOAuthSession(w http.ResponseWriter, r *http.Request, userID string) {
 	if err := h.createSession(r.Context(), w, userID); err != nil {
 		h.logger.ErrorContext(r.Context(), "auth: create session", "error", err)
 		http.Redirect(w, r, "/admin/login?error=session", http.StatusFound)

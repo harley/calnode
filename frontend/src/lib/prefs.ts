@@ -64,11 +64,12 @@ export function fmtTime(iso: string, p: UserPrefs = get(prefs)): string {
 
 export const WEEK_DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-export const TIMEZONES = [
+const fallbackTimezones = [
 	'Pacific/Auckland',
 	'Australia/Sydney',
 	'Australia/Melbourne',
 	'Asia/Tokyo',
+	'Asia/Ho_Chi_Minh',
 	'Asia/Singapore',
 	'Asia/Dubai',
 	'Europe/London',
@@ -81,3 +82,10 @@ export const TIMEZONES = [
 	'America/Los_Angeles',
 	'UTC'
 ];
+
+// Preserve common aliases while letting staff choose any timezone their browser
+// supports. UTC and Ho Chi Minh are omitted from some browsers' canonical list.
+export const TIMEZONES = [...new Set([
+	...fallbackTimezones,
+	...(typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : [])
+])].sort();
