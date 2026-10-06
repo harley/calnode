@@ -11,6 +11,7 @@ import (
 
 	"github.com/calnode/calnode/internal/booking"
 	"github.com/calnode/calnode/internal/i18n"
+	"github.com/calnode/calnode/internal/mailer"
 	"github.com/calnode/calnode/internal/uid"
 )
 
@@ -410,6 +411,34 @@ func (h *Handler) GetBookingAnswers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+// bookingAnswersForEmail loads saved intake replies with their question labels
+// in form order for host booking notifications.
+func (h *Handler) bookingAnswersForEmail(ctx context.Context, bookingID string) ([]mailer.BookingAnswer, error) {
+	rows, err := h.db.QueryContext(ctx, `
+		SELECT q.label, a.value
+		FROM booking_answers a
+		JOIN event_type_questions q ON q.id = a.question_id
+		WHERE a.booking_id = ?
+		ORDER BY q.position, q.id`, bookingID)
+	if err != nil {
+		return nil, fmt.Errorf("load booking answers: %w", err)
+	}
+	defer rows.Close()
+
+	var answers []mailer.BookingAnswer
+	for rows.Next() {
+		var answer mailer.BookingAnswer
+		if err := rows.Scan(&answer.Label, &answer.Value); err != nil {
+			return nil, fmt.Errorf("scan booking answer: %w", err)
+		}
+		answers = append(answers, answer)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read booking answers: %w", err)
+	}
+	return answers, nil
 }
 
 // scanQuestion scans a row from event_type_questions into a questionJSON.

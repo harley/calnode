@@ -110,6 +110,30 @@ func TestSendConfirmation_hostEmail(t *testing.T) {
 	}
 }
 
+func TestSendConfirmation_hostIncludesBookingAnswersOnly(t *testing.T) {
+	cap := &captureMailer{}
+	d := testBookingData()
+	d.Answers = []BookingAnswer{{Label: "What should we discuss?", Value: "First line\n<script>alert(1)</script>"}}
+	if err := SendConfirmation(context.Background(), cap, d); err != nil {
+		t.Fatal(err)
+	}
+	msgs := cap.all()
+	for _, part := range []string{"Booking answers:", "What should we discuss?", "First line", "<script>alert(1)</script>"} {
+		if !strings.Contains(msgs[1].Text, part) {
+			t.Errorf("host text missing %q", part)
+		}
+	}
+	if !strings.Contains(msgs[1].HTML, "Booking answers") || !strings.Contains(msgs[1].HTML, "What should we discuss?") {
+		t.Error("host HTML missing the booking answer")
+	}
+	if strings.Contains(msgs[1].HTML, "<script>") || !strings.Contains(msgs[1].HTML, "&lt;script&gt;") {
+		t.Error("host HTML did not escape the booking answer")
+	}
+	if strings.Contains(msgs[0].Text, "What should we discuss?") || strings.Contains(msgs[0].HTML, "What should we discuss?") {
+		t.Error("attendee email unexpectedly contains intake answers")
+	}
+}
+
 func TestSendConfirmation_noHostEmail_skipsHostSend(t *testing.T) {
 	cap := &captureMailer{}
 	d := testBookingData()

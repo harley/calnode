@@ -1335,6 +1335,12 @@ func (h *Handler) dispatchBookingConfirmation(b *booking.Booking, in bookingConf
 	if subjNote.Valid {
 		bData.SubjectOverride = subjNote.String
 	}
+	answers, answersErr := h.bookingAnswersForEmail(ctx, b.ID)
+	if answersErr != nil {
+		h.logger.Error("booking confirmation: load answers", "error", answersErr, "booking_id", b.ID)
+	} else {
+		bData.Answers = answers
+	}
 
 	meetURL, autoGenMeet, livekitHostURL := h.mintMeetingLink(ctx, b, in, &bData, hosts)
 	primaryPrefs, hostFailed := h.createHostEventsAndNotify(ctx, b, in, &bData, hosts, meetURL, autoGenMeet, livekitHostURL)
