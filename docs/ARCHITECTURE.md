@@ -546,6 +546,41 @@ CalDAV without iTIP scheduling (RFC 6638) does **not** auto-invite, so a future 
 provider would want the `.ics` — the rule is "no destination whose provider
 auto-delivers invites," not "no Google."
 
+**Who sends the invite: `invite_delivery` (migration 00071).** Per event type, copied onto
+each booking at creation. `calendar` (default) is everything above: the booker is a guest
+on each host's event and the provider invites them, from the host's own address.
+`calnode` writes the hosts' events **without guests** (`calendarInvitee` returns "", which
+every provider reads as "no attendee", so nobody is emailed from a host's account) and
+always attaches Calnode's `.ics` to the booker's emails, with `ORGANIZER` set to the
+instance sender from Settings → Email (`applyInviteDelivery`, `BookingData.HideHostInInvite`).
+No sender address means no `ORGANIZER` line, never a fallback to the host. Host copies keep
+the host as organizer and, for a `calnode` booking, leave the booker out entirely and go out as
+`METHOD:PUBLISH` (`applyHostInvite`, `ICSWithoutAttendee`), so no host calendar holds them as
+a guest it could re-invite. Reschedule, cancel, reassign and the reconciler read the mode from
+the **booking**, not the event type, so a booking is always updated through the channel
+its invite went out on. Switching an event type to `calnode` requires email to be set up
+(validated on change).
+
+**RSVPs to Calnode-sent invites (migration 00072, `rsvp_inbound.go`).** A booker's
+Yes/No/Maybe is an iTIP `REPLY` their mail client emails to the invite's `ORGANIZER`. Each
+booking's organizer address is fixed at its first send (`bookings.invite_organizer`,
+`bookingInviteOrganizer`), because clients match later updates by UID *and* organizer. With
+RSVP tracking set up (Settings → Email: an address on a Resend receiving domain, the
+webhook signing secret, and a **full-access** Resend API key) that address is private per
+booking, `rsvp+<128-bit token>@domain`. `POST /v1/settings/email/rsvp-webhook`
+(`mailer.EnsureResendInboundWebhook`) creates or reuses the Resend webhook and stores its
+secret; the page falls back to manual steps when it cannot. Resend posts `email.received`
+to `POST /v1/email/inbound/resend`; the handler verifies the Svix signature
+(`mailer.VerifyResendWebhook`), routes by recipient to a confirmed, upcoming booking,
+fetches the message with Resend's own SPF/DKIM/DMARC verdicts (`mailer.FetchReceived`),
+and records the answer on `booking_attendees.rsvp_status` only if Resend verified the From
+domain (DKIM or DMARC pass), the From is the booker, the UID is the booking's, and the
+`REPLY` answers for the booker. The body is sender-written, so its `ATTENDEE` line is never
+trusted on its own. A changed answer fires `booking.rsvp`. It answers 200 to anything it
+will not act on and 5xx only when the fetch failed, so Resend retries exactly what a retry
+can fix. Hosts' calendar events are not updated with the answer: no provider has an "edit
+event" write op yet.
+
 **Adding another provider (Apple/iCloud, CalDAV):** implement `calendar.Provider`,
 register it in `internal/server`, set `InvitesGuests()` correctly (drives the `.ics`
 gate above), and extend `providerMintsPlatform`/`CanAutoGenerate` if it offers a
