@@ -2,11 +2,14 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )
@@ -18,77 +21,124 @@ const (
 	stateDuration     = 5 * time.Minute
 )
 
-// SetGoogleAuth configures the handler for Google OAuth sign-in.
-// Called from server.New when GOOGLE_CLIENT_ID is set.
-// secure should be true when BASE_URL starts with https://.
+// SetGoogleAuth replaces the code-exchange config and matching verifier together.
 func (h *Handler) SetGoogleAuth(clientID, clientSecret, redirectURL string, secure bool) {
-	cfg := &oauth2.Config{
-		ClientID:     clientID,
-		ClientSecret: clientSecret,
-		Endpoint:     google.Endpoint,
-		RedirectURL:  redirectURL,
-		Scopes:       []string{"openid", "email", "profile"},
-	}
+	cfg := &oauth2.Config{ClientID: clientID, ClientSecret: clientSecret,
+		Endpoint: google.Endpoint, RedirectURL: redirectURL, Scopes: []string{"openid", "email", "profile"}}
+	ctx := oidc.ClientContext(context.Background(), &http.Client{Timeout: 15 * time.Second})
+	verifier := oidc.NewVerifier("https://accounts.google.com",
+		oidc.NewRemoteKeySet(ctx, "https://www.googleapis.com/oauth2/v3/certs"),
+		&oidc.Config{ClientID: clientID, SupportedSigningAlgs: []string{oidc.RS256}})
 	h.authMu.Lock()
-	h.googleAuth = cfg
-	h.secureCookie = secure
+	h.googleAuth, h.googleVerifier, h.secureCookie = cfg, verifier, secure
 	h.authMu.Unlock()
 }
 
-// LoginGoogle redirects the user to Google's OAuth consent screen.
-// GET /v1/auth/login
-func (h *Handler) LoginGoogle(w http.ResponseWriter, r *http.Request) {
-	ga := h.getGoogleAuth()
-	if ga == nil {
-		http.Error(w, "Google OAuth not configured — set GOOGLE_CLIENT_ID", http.StatusServiceUnavailable)
-		return
-	}
-	state, err := h.newOAuthState(w)
-	if err != nil {
-		h.logger.ErrorContext(r.Context(), "auth: generate state", "error", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	http.Redirect(w, r, ga.AuthCodeURL(state, oauth2.AccessTypeOnline), http.StatusFound)
+// The nonce is bound to the same short-lived, HttpOnly OAuth state cookie.
+func googleNonce(state string) string {
+	digest := sha256.Sum256([]byte("google-login:" + state))
+	return hex.EncodeToString(digest[:])
 }
 
-// CallbackGoogle handles the OAuth redirect from Google.
-// GET /v1/auth/callback
-func (h *Handler) CallbackGoogle(w http.ResponseWriter, r *http.Request) {
+// LoginGoogle starts the Google OpenID Connect code flow.
+func (h *Handler) LoginGoogle(w http.ResponseWriter, r *http.Request) {
 	ga := h.getGoogleAuth()
 	if ga == nil {
 		http.Error(w, "Google OAuth not configured", http.StatusServiceUnavailable)
 		return
 	}
+	state, err := h.newOAuthState(w)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, ga.AuthCodeURL(state, oauth2.AccessTypeOnline, oidc.Nonce(googleNonce(state))), http.StatusFound)
+}
 
-	// Verify CSRF state (cookie must match the URL param) and consume it.
+// CallbackGoogle trusts only a signed identity for the active OAuth client.
+func (h *Handler) CallbackGoogle(w http.ResponseWriter, r *http.Request) {
+	h.authMu.RLock()
+	ga, verifier := h.googleAuth, h.googleVerifier
+	h.authMu.RUnlock()
+	if ga == nil || verifier == nil {
+		http.Error(w, "Google OAuth not configured", http.StatusServiceUnavailable)
+		return
+	}
 	if !h.verifyOAuthState(w, r) {
-		http.Redirect(w, r, "/admin/login?error=state", http.StatusFound)
+		googleLoginError(w, r, "state")
 		return
 	}
-
 	if r.URL.Query().Get("error") != "" {
-		// User denied consent.
-		http.Redirect(w, r, "/admin/login?error=denied", http.StatusFound)
+		googleLoginError(w, r, "denied")
 		return
 	}
-
-	tok, err := ga.Exchange(r.Context(), r.URL.Query().Get("code"))
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	tok, err := ga.Exchange(ctx, r.URL.Query().Get("code"))
 	if err != nil {
-		h.logger.ErrorContext(r.Context(), "auth: token exchange", "error", err)
-		http.Redirect(w, r, "/admin/login?error=oauth", http.StatusFound)
+		// Provider errors can contain token bodies; never log them.
+		h.logger.WarnContext(ctx, "Google login token exchange failed")
+		googleLoginError(w, r, "oauth")
 		return
 	}
-
-	info, err := fetchGoogleUserInfo(r.Context(), ga, tok)
+	raw, ok := tok.Extra("id_token").(string)
+	if !ok || raw == "" {
+		googleLoginError(w, r, "identity")
+		return
+	}
+	info, err := verifyGoogleIdentity(ctx, verifier, ga.ClientID, raw, googleNonce(r.URL.Query().Get("state")))
 	if err != nil {
-		h.logger.ErrorContext(r.Context(), "auth: user info", "error", err)
-		http.Redirect(w, r, "/admin/login?error=userinfo", http.StatusFound)
+		h.logger.WarnContext(ctx, "Google login identity verification failed")
+		googleLoginError(w, r, "identity")
 		return
 	}
+	userID, code, err := h.resolveGoogleUser(ctx, info)
+	if err != nil {
+		h.logger.ErrorContext(ctx, "Google login account resolution failed")
+		googleLoginError(w, r, "session")
+		return
+	}
+	if code != "" {
+		googleLoginError(w, r, code)
+		return
+	}
+	h.finishOAuthSession(w, r, userID)
+}
 
-	// Only existing users can log in — no self-registration.
-	h.finishOAuthLogin(w, r, info.Email)
+func googleLoginError(w http.ResponseWriter, r *http.Request, code string) {
+	http.Redirect(w, r, "/admin/login?error="+code, http.StatusFound)
+}
+
+type googleIdentity struct {
+	Subject         string `json:"sub"`
+	Email           string `json:"email"`
+	Name            string `json:"name"`
+	EmailVerified   bool   `json:"email_verified"`
+	HostedDomain    string `json:"hd"`
+	AuthorizedParty string `json:"azp"`
+}
+
+func verifyGoogleIdentity(ctx context.Context, verifier *oidc.IDTokenVerifier, clientID, raw, nonce string) (*googleIdentity, error) {
+	token, err := verifier.Verify(ctx, raw)
+	if err != nil {
+		return nil, err
+	}
+	if nonce == "" || token.Nonce != nonce {
+		return nil, fmt.Errorf("invalid nonce")
+	}
+	var info googleIdentity
+	if err := token.Claims(&info); err != nil {
+		return nil, err
+	}
+	if info.Subject == "" || !info.EmailVerified || info.Email == "" ||
+		(info.AuthorizedParty != "" && info.AuthorizedParty != clientID) {
+		return nil, fmt.Errorf("invalid identity claims")
+	}
+	info.Email = strings.ToLower(strings.TrimSpace(info.Email))
+	if strings.Count(info.Email, "@") != 1 || strings.ContainsAny(info.Email, " \t\r\n") {
+		return nil, fmt.Errorf("invalid email")
+	}
+	return &info, nil
 }
 
 // Logout deletes the session record and clears the session cookie.
@@ -114,34 +164,4 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 		Secure:   h.secureCookie,
 	})
 	http.Redirect(w, r, "/admin/login", http.StatusFound)
-}
-
-type googleUserInfo struct {
-	Email         string `json:"email"`
-	Name          string `json:"name"`
-	VerifiedEmail bool   `json:"verified_email"`
-}
-
-func fetchGoogleUserInfo(ctx context.Context, cfg *oauth2.Config, tok *oauth2.Token) (*googleUserInfo, error) {
-	resp, err := cfg.Client(ctx, tok).Get("https://www.googleapis.com/oauth2/v2/userinfo")
-	if err != nil {
-		return nil, fmt.Errorf("auth: userinfo request: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("auth: userinfo status %d", resp.StatusCode)
-	}
-	var info googleUserInfo
-	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
-		return nil, fmt.Errorf("auth: decode userinfo: %w", err)
-	}
-	if info.Email == "" {
-		return nil, fmt.Errorf("auth: empty email from Google")
-	}
-	// Reject unverified emails: an attacker could claim an unverified address
-	// matching a real user's email and bypass the user-lookup check.
-	if !info.VerifiedEmail {
-		return nil, fmt.Errorf("auth: Google email not verified")
-	}
-	return &info, nil
 }

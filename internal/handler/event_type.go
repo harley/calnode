@@ -20,30 +20,31 @@ const (
 )
 
 type eventTypeJSON struct {
-	AllowPhoneCall      bool    `json:"allow_phone_call"`
-	ID                  string  `json:"id"`
-	Slug                string  `json:"slug"`
-	Name                string  `json:"name"`
-	Description         *string `json:"description"`
-	DurationMinutes     int     `json:"duration_minutes"`
-	SlotIntervalMinutes int     `json:"slot_interval_minutes"`
-	LocationType        string  `json:"location_type"`
-	LocationValue       *string `json:"location_value"`
-	RoutingMode         string  `json:"routing_mode"`
-	RRStrategy          string  `json:"rr_strategy"`
-	BufferBeforeMinutes int     `json:"buffer_before_minutes"`
-	BufferAfterMinutes  int     `json:"buffer_after_minutes"`
-	MinNoticeMinutes    int     `json:"min_notice_minutes"`
-	MaxFutureDays       int     `json:"max_future_days"`
-	MaxActiveBookings   int     `json:"max_active_bookings"`
-	IsActive            bool    `json:"is_active"`
+	BlockedEmailDomains []string `json:"blocked_email_domains"`
+	AllowPhoneCall      bool     `json:"allow_phone_call"`
+	ID                  string   `json:"id"`
+	Slug                string   `json:"slug"`
+	Name                string   `json:"name"`
+	Description         *string  `json:"description"`
+	DurationMinutes     int      `json:"duration_minutes"`
+	SlotIntervalMinutes int      `json:"slot_interval_minutes"`
+	LocationType        string   `json:"location_type"`
+	LocationValue       *string  `json:"location_value"`
+	RoutingMode         string   `json:"routing_mode"`
+	RRStrategy          string   `json:"rr_strategy"`
+	BufferBeforeMinutes int      `json:"buffer_before_minutes"`
+	BufferAfterMinutes  int      `json:"buffer_after_minutes"`
+	MinNoticeMinutes    int      `json:"min_notice_minutes"`
+	MaxFutureDays       int      `json:"max_future_days"`
+	MaxActiveBookings   int      `json:"max_active_bookings"`
+	IsActive            bool     `json:"is_active"`
 	// ShowTakenSlots renders already-booked times greyed out on the booking page
 	// instead of omitting them. Off by default: the slots endpoint is public, so this
 	// makes the host's booked hours legible to anyone with the link (#19).
 	ShowTakenSlots bool `json:"show_taken_slots"`
 	// InviteDelivery is who sends the booker's calendar invite: "calendar" (each host's
 	// connected calendar, from the host's own address) or "calnode" (Calnode's own .ics,
-	// from the instance sender, so no host address reaches the booker). See migration 00068.
+	// from the instance sender, so no host address reaches the booker). See migration 00071.
 	InviteDelivery  string  `json:"invite_delivery"`
 	IsPublic        bool    `json:"is_public"`
 	CreatedAt       string  `json:"created_at"`
@@ -91,6 +92,7 @@ func scanEventType(s rowScanner) (*eventTypeJSON, error) {
 // pointers (e.g. the computed `owned` column from the list/get queries).
 func scanEventTypeRow(s rowScanner, trailing ...any) (*eventTypeJSON, error) {
 	var et eventTypeJSON
+	var blockedJSON string
 	var desc, locVal, msgConf, msgCancel, msgResched, msgRemind, msgGreeting sql.NullString
 	var subjConf, subjCancel, subjResched, subjRemind sql.NullString
 	var isActive, isPublic, showTaken int
@@ -105,7 +107,7 @@ func scanEventTypeRow(s rowScanner, trailing ...any) (*eventTypeJSON, error) {
 		&isActive, &isPublic, &showTaken, &et.CreatedAt,
 		&msgConf, &msgCancel, &msgResched, &msgRemind, &msgGreeting,
 		&subjConf, &subjCancel, &subjResched, &subjRemind,
-		&et.PriceCents, &et.Currency, &et.InviteDelivery,
+		&et.PriceCents, &et.Currency, &blockedJSON, &et.InviteDelivery,
 	}
 	dests = append(dests, trailing...)
 	err := s.Scan(dests...)
@@ -113,6 +115,9 @@ func scanEventTypeRow(s rowScanner, trailing ...any) (*eventTypeJSON, error) {
 		return nil, nil
 	}
 	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal([]byte(blockedJSON), &et.BlockedEmailDomains); err != nil {
 		return nil, err
 	}
 	if desc.Valid {
@@ -164,7 +169,7 @@ const etColumns = `id, slug, name, description,
 	is_active, is_public, show_taken_slots, created_at,
 	msg_confirmation, msg_cancellation, msg_reschedule, msg_reminder, msg_greeting,
 	subj_confirmation, subj_cancellation, subj_reschedule, subj_reminder,
-	price_cents, currency, invite_delivery`
+	price_cents, currency, blocked_email_domains, invite_delivery`
 
 // selectETCols fetches a single owner-scoped event type (no `owned` column).
 const selectETCols = "SELECT " + etColumns + " FROM event_types"
@@ -216,27 +221,34 @@ func (h *Handler) CreateEventType(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
 
 	var req struct {
-		Slug                string  `json:"slug"`
-		Name                string  `json:"name"`
-		Description         *string `json:"description"`
-		DurationMinutes     int     `json:"duration_minutes"`
-		SlotIntervalMinutes *int    `json:"slot_interval_minutes"`
-		LocationType        *string `json:"location_type"`
-		LocationValue       *string `json:"location_value"`
-		RoutingMode         *string `json:"routing_mode"`
-		BufferBeforeMinutes *int    `json:"buffer_before_minutes"`
-		BufferAfterMinutes  *int    `json:"buffer_after_minutes"`
-		MinNoticeMinutes    *int    `json:"min_notice_minutes"`
-		MaxFutureDays       *int    `json:"max_future_days"`
-		MaxActiveBookings   *int    `json:"max_active_bookings"`
-		AllowPhoneCall      *bool   `json:"allow_phone_call"`
-		ShowTakenSlots      *bool   `json:"show_taken_slots"`
-		InviteDelivery      *string `json:"invite_delivery"`
+		BlockedEmailDomains []string `json:"blocked_email_domains"`
+		Slug                string   `json:"slug"`
+		Name                string   `json:"name"`
+		Description         *string  `json:"description"`
+		DurationMinutes     int      `json:"duration_minutes"`
+		SlotIntervalMinutes *int     `json:"slot_interval_minutes"`
+		LocationType        *string  `json:"location_type"`
+		LocationValue       *string  `json:"location_value"`
+		RoutingMode         *string  `json:"routing_mode"`
+		BufferBeforeMinutes *int     `json:"buffer_before_minutes"`
+		BufferAfterMinutes  *int     `json:"buffer_after_minutes"`
+		MinNoticeMinutes    *int     `json:"min_notice_minutes"`
+		MaxFutureDays       *int     `json:"max_future_days"`
+		MaxActiveBookings   *int     `json:"max_active_bookings"`
+		AllowPhoneCall      *bool    `json:"allow_phone_call"`
+		ShowTakenSlots      *bool    `json:"show_taken_slots"`
+		InviteDelivery      *string  `json:"invite_delivery"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
+	blockedDomains, err := booking.NormalizeBlockedDomains(req.BlockedEmailDomains)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	blockedJSON, _ := json.Marshal(blockedDomains)
 	if req.Slug == "" || req.Name == "" {
 		h.writeError(w, http.StatusBadRequest, "slug and name are required")
 		return
@@ -334,13 +346,15 @@ func (h *Handler) CreateEventType(w http.ResponseWriter, r *http.Request) {
 		  (id, user_id, slug, name, description, duration_minutes,
 		   slot_interval_minutes, location_type, location_value, allow_phone_call,
 		   routing_mode, buffer_before_minutes, buffer_after_minutes,
-		   min_notice_minutes, max_future_days, max_active_bookings, show_taken_slots, invite_delivery,
-		   msg_confirmation, msg_cancellation, msg_reschedule, msg_reminder)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		   min_notice_minutes, max_future_days, max_active_bookings, show_taken_slots,
+		   invite_delivery, msg_confirmation, msg_cancellation, msg_reschedule, msg_reminder,
+		   blocked_email_domains)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		id, user.ID, req.Slug, req.Name, req.Description,
 		req.DurationMinutes, slotInterval, locType, req.LocationValue, req.AllowPhoneCall != nil && *req.AllowPhoneCall,
-		routingMode, bufBefore, bufAfter, minNotice, maxFuture, maxActive, showTaken, inviteDelivery,
-		defaultMsgConfirmation, defaultMsgCancellation, defaultMsgReschedule, defaultMsgReminder)
+		routingMode, bufBefore, bufAfter, minNotice, maxFuture, maxActive, showTaken,
+		inviteDelivery, defaultMsgConfirmation, defaultMsgCancellation, defaultMsgReschedule,
+		defaultMsgReminder, string(blockedJSON))
 	if err != nil {
 		if db.IsUniqueViolation(err) {
 			h.writeError(w, http.StatusConflict, "slug already in use")
@@ -455,38 +469,39 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
 
 	var req struct {
-		Slug                *string `json:"slug"`
-		Name                *string `json:"name"`
-		Description         *string `json:"description"`
-		DurationMinutes     *int    `json:"duration_minutes"`
-		SlotIntervalMinutes *int    `json:"slot_interval_minutes"`
-		LocationType        *string `json:"location_type"`
-		LocationValue       *string `json:"location_value"`
-		RoutingMode         *string `json:"routing_mode"`
-		RRStrategy          *string `json:"rr_strategy"`
-		BufferBeforeMinutes *int    `json:"buffer_before_minutes"`
-		BufferAfterMinutes  *int    `json:"buffer_after_minutes"`
-		MinNoticeMinutes    *int    `json:"min_notice_minutes"`
-		MaxFutureDays       *int    `json:"max_future_days"`
-		MaxActiveBookings   *int    `json:"max_active_bookings"`
-		IsActive            *bool   `json:"is_active"`
-		IsPublic            *bool   `json:"is_public"`
-		AllowPhoneCall      *bool   `json:"allow_phone_call"`
-		ShowTakenSlots      *bool   `json:"show_taken_slots"`
-		InviteDelivery      *string `json:"invite_delivery"`
-		Archived            *bool   `json:"archived"`
-		MsgConfirmation     *string `json:"msg_confirmation"`
-		MsgCancellation     *string `json:"msg_cancellation"`
-		MsgReschedule       *string `json:"msg_reschedule"`
-		MsgReminder         *string `json:"msg_reminder"`
-		MsgGreeting         *string `json:"msg_greeting"`
-		SubjConfirmation    *string `json:"subj_confirmation"`
-		SubjCancellation    *string `json:"subj_cancellation"`
-		SubjReschedule      *string `json:"subj_reschedule"`
-		SubjReminder        *string `json:"subj_reminder"`
-		PriceCents          *int    `json:"price_cents"`
-		Currency            *string `json:"currency"`
-		Reminders           []int   `json:"reminders"` // nil = don't touch; [] = clear all
+		BlockedEmailDomains *[]string `json:"blocked_email_domains"`
+		Slug                *string   `json:"slug"`
+		Name                *string   `json:"name"`
+		Description         *string   `json:"description"`
+		DurationMinutes     *int      `json:"duration_minutes"`
+		SlotIntervalMinutes *int      `json:"slot_interval_minutes"`
+		LocationType        *string   `json:"location_type"`
+		LocationValue       *string   `json:"location_value"`
+		RoutingMode         *string   `json:"routing_mode"`
+		RRStrategy          *string   `json:"rr_strategy"`
+		BufferBeforeMinutes *int      `json:"buffer_before_minutes"`
+		BufferAfterMinutes  *int      `json:"buffer_after_minutes"`
+		MinNoticeMinutes    *int      `json:"min_notice_minutes"`
+		MaxFutureDays       *int      `json:"max_future_days"`
+		MaxActiveBookings   *int      `json:"max_active_bookings"`
+		IsActive            *bool     `json:"is_active"`
+		IsPublic            *bool     `json:"is_public"`
+		AllowPhoneCall      *bool     `json:"allow_phone_call"`
+		ShowTakenSlots      *bool     `json:"show_taken_slots"`
+		InviteDelivery      *string   `json:"invite_delivery"`
+		Archived            *bool     `json:"archived"`
+		MsgConfirmation     *string   `json:"msg_confirmation"`
+		MsgCancellation     *string   `json:"msg_cancellation"`
+		MsgReschedule       *string   `json:"msg_reschedule"`
+		MsgReminder         *string   `json:"msg_reminder"`
+		MsgGreeting         *string   `json:"msg_greeting"`
+		SubjConfirmation    *string   `json:"subj_confirmation"`
+		SubjCancellation    *string   `json:"subj_cancellation"`
+		SubjReschedule      *string   `json:"subj_reschedule"`
+		SubjReminder        *string   `json:"subj_reminder"`
+		PriceCents          *int      `json:"price_cents"`
+		Currency            *string   `json:"currency"`
+		Reminders           []int     `json:"reminders"` // nil = don't touch; [] = clear all
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -603,6 +618,15 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		set("currency", cur)
+	}
+	if req.BlockedEmailDomains != nil {
+		domains, err := booking.NormalizeBlockedDomains(*req.BlockedEmailDomains)
+		if err != nil {
+			h.writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		encoded, _ := json.Marshal(domains)
+		set("blocked_email_domains", string(encoded))
 	}
 	if req.IsActive != nil {
 		v := 0
@@ -760,16 +784,9 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 		set("invite_delivery", newInviteDelivery)
 	}
 
-	// The slug is the public booking URL, so renaming one that is already in circulation
-	// breaks every link to it: an invitation in somebody's inbox, a page embedding the
-	// widget, a QR code on a card. It is allowed only while the event type has no
-	// bookings, which is exactly the case that needs it - a fresh duplicate arrives as
-	// "<slug>-copy" and there is otherwise no way to give it a real name (#22).
-	//
-	// "No bookings" rather than "not yet active": a link can be shared before anyone
-	// books, but a booking is the first evidence the URL actually reached someone, and it
-	// is the check we can make honestly. Cancelled ones count - the manage link in that
-	// booker's confirmation email still resolves through the slug.
+	// Renaming changes the public booking URL without redirecting the old one.
+	// Existing bookings and their token-based manage links use stable IDs, so they
+	// remain valid. Owners must update shared URLs and embeds after a rename.
 	effectiveSlug := slug
 	if req.Slug != nil {
 		newSlug := slugify(*req.Slug)
@@ -779,19 +796,6 @@ func (h *Handler) PatchEventType(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if newSlug != slug {
-			var bookings int
-			if err := h.db.QueryRowContext(r.Context(),
-				`SELECT COUNT(*) FROM bookings WHERE event_type_id = ?`, etID).Scan(&bookings); err != nil {
-				h.logger.ErrorContext(r.Context(), "patch event type: count bookings", "error", err)
-				h.writeError(w, http.StatusInternalServerError, "internal error")
-				return
-			}
-			if bookings > 0 {
-				h.writeError(w, http.StatusConflict,
-					"cannot change the slug of an event type that already has bookings - "+
-						"its booking links are already in circulation")
-				return
-			}
 			set("slug", newSlug)
 			effectiveSlug = newSlug
 		}
@@ -890,7 +894,7 @@ func (h *Handler) DeleteEventType(w http.ResponseWriter, r *http.Request) {
 		`DELETE FROM event_types WHERE slug = ? AND user_id = ?`, slug, user.ID)
 	if err != nil {
 		if db.IsForeignKeyViolation(err) {
-			h.writeError(w, http.StatusConflict, "this event type has bookings in its history (including cancelled ones) and can't be deleted — deactivate it instead")
+			h.writeError(w, http.StatusConflict, "this event type has bookings in its history (including cancelled ones) and can't be deleted — archive it instead")
 			return
 		}
 		h.logger.ErrorContext(r.Context(), "delete event type", "error", err)

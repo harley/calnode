@@ -23,7 +23,7 @@ import (
 func (h *Handler) MCPServer() *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{
 		Name:    "calnode",
-		Title:   "Calnode booking",
+		Title:   "Book with CoderPush",
 		Version: buildinfo.Get().Version,
 	}, nil)
 
@@ -407,6 +407,8 @@ func (h *Handler) mcpCreateBooking(ctx context.Context, _ *mcp.CallToolRequest, 
 			return nil, bookingJSON{}, fmt.Errorf("event type not found: %s", in.EventTypeID)
 		case errors.Is(err, booking.ErrDoubleBooked), errors.Is(err, errNoHostAvailable), errors.Is(err, errSlotUnavailable):
 			return nil, bookingJSON{}, fmt.Errorf("this slot is no longer available")
+		case errors.Is(err, booking.ErrEmailDomainBlocked):
+			return nil, bookingJSON{}, booking.ErrEmailDomainBlocked
 		case errors.Is(err, booking.ErrBookingLimitReached):
 			return nil, bookingJSON{}, fmt.Errorf("the attendee already holds the maximum number of upcoming bookings for this event")
 		case errors.Is(err, booking.ErrEmailThrottled):

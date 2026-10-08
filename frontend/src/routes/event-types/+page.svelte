@@ -120,13 +120,13 @@
 <ConfirmDialog
 	bind:open={deleteOpen}
 	title="Delete event type?"
-	description="This will permanently remove the event type and its booking link. Existing bookings are not affected."
+	description="This will permanently remove the event type and its booking link. Event types with booking history cannot be deleted; archive them instead."
 	confirmText="Delete"
 	destructive
 	onConfirm={doDelete}
 />
 
-<svelte:head><title>Event Types — Calnode</title></svelte:head>
+<svelte:head><title>Event Types — Book with CoderPush</title></svelte:head>
 
 <div class="mb-8 flex items-center justify-between">
 	<div>

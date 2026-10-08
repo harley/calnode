@@ -58,7 +58,14 @@ func New(db *sql.DB, clientID, clientSecret, redirectURL, encKeyHex string) (*Cl
 			ClientSecret: clientSecret,
 			Endpoint:     google.Endpoint,
 			RedirectURL:  redirectURL,
-			Scopes:       []string{"https://www.googleapis.com/auth/calendar"},
+			// Booking needs event writes, free/busy, calendar selection and metadata;
+			// it must not request permission to share or delete entire calendars.
+			Scopes: []string{
+				"https://www.googleapis.com/auth/calendar.events",
+				"https://www.googleapis.com/auth/calendar.events.freebusy",
+				"https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+				"https://www.googleapis.com/auth/calendar.calendars.readonly",
+			},
 		},
 		key:     key,
 		db:      db,

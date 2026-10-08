@@ -12,18 +12,22 @@ import (
 //go:embed all:build
 var buildFS embed.FS
 
-// FaviconHandler serves the embedded favicon (build/favicon.svg) so the public
+// FaviconHandler serves the embedded SVG or ICO favicon so the public
 // server-rendered pages and the admin SPA share a single favicon source — change
 // frontend/static/favicon.svg, rebuild, and every page updates.
 func FaviconHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		f, err := buildFS.Open("build/favicon.svg")
+		name, contentType := "favicon.svg", "image/svg+xml"
+		if r.URL.Path == "/favicon.ico" {
+			name, contentType = "favicon.ico", "image/x-icon"
+		}
+		f, err := buildFS.Open("build/" + name)
 		if err != nil {
 			http.NotFound(w, r)
 			return
 		}
 		defer f.Close()
-		w.Header().Set("Content-Type", "image/svg+xml")
+		w.Header().Set("Content-Type", contentType)
 		w.Header().Set("Cache-Control", "public, max-age=3600")
 		_, _ = io.Copy(w, f)
 	})

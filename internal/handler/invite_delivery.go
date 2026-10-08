@@ -8,7 +8,7 @@ import (
 	"github.com/calnode/calnode/internal/mailer"
 )
 
-// Invite delivery decides who sends the booker's calendar invite (migration 00068):
+// Invite delivery decides who sends the booker's calendar invite (migration 00071):
 //
 //   - booking.InviteByCalendar: each host's connected calendar invites the booker, so
 //     Google/Microsoft email the invite from that host's own account. The default.

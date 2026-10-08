@@ -327,7 +327,7 @@ func (h *Handler) rescheduleSideEffects(bCopy booking.Booking, capturedEtID stri
 	if subjNote.Valid {
 		d.SubjectOverride = subjNote.String
 	}
-	if prefs.NotifyReschedule {
+	if prefs.NotifyReschedule || bCopy.InviteDelivery == booking.InviteByCalnode {
 		if err := mailer.SendRescheduleToAttendee(ctx, h.mailer, d); err != nil {
 			h.logger.Error("reschedule email (attendee)", "error", err, "booking_id", bCopy.ID)
 		}

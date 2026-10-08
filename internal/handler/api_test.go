@@ -467,6 +467,32 @@ func TestDeleteEventType(t *testing.T) {
 	}
 }
 
+func TestDeleteEventTypeWithBookingHistory(t *testing.T) {
+	h, database, key, ownerID := setupWorkspaceWithDB(t)
+	slug, eventTypeID := seedEventTypeHTTP(t, h, key)
+	if _, err := database.Exec(`
+		INSERT INTO bookings (id, event_type_id, host_id, start_at, end_at, status)
+		VALUES ('past-booking', ?, ?, '2026-06-15T10:00:00Z', '2026-06-15T10:30:00Z', 'cancelled')`,
+		eventTypeID, ownerID); err != nil {
+		t.Fatalf("seed booking history: %v", err)
+	}
+
+	req := authReq(http.MethodDelete, "/v1/event-types/"+slug, "", key)
+	req.SetPathValue("slug", slug)
+	rec := httptest.NewRecorder()
+	h.RequireAuth(h.DeleteEventType)(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("delete with booking history: status = %d — %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "bookings in its history") {
+		t.Errorf("delete response should explain the conflict: %s", rec.Body.String())
+	}
+	var count int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM event_types WHERE id = ?`, eventTypeID).Scan(&count); err != nil || count != 1 {
+		t.Errorf("event type should remain after rejected delete: count=%d, err=%v", count, err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Availability rules
 // ---------------------------------------------------------------------------

@@ -4,11 +4,17 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/calnode/calnode/internal/mailer"
 )
 
 func TestReassignBooking_movesHost(t *testing.T) {
 	h, database, ownerKey, _ := setupWorkspaceWithDB(t)
+	cap := bookingEmailCapture{messages: make(chan mailer.Message, 4)}
+	h.SetMailer(cap, "https://book.example.com")
 	// Two members who can host.
 	database.Exec(`INSERT INTO users (id,email,name,iana_timezone,is_admin) VALUES ('u2','h2@example.com','Host2','UTC',0)`)
 	database.Exec(`INSERT INTO users (id,email,name,iana_timezone,is_admin) VALUES ('u3','h3@example.com','Host3','UTC',0)`)
@@ -17,6 +23,14 @@ func TestReassignBooking_movesHost(t *testing.T) {
 		VALUES ('b1','et1','u2','2099-01-01T10:00:00Z','2099-01-01T10:30:00Z','confirmed')`)
 	database.Exec(`INSERT INTO booking_attendees (id,booking_id,name,email,iana_timezone,is_organizer)
 		VALUES ('a1','b1','Alice','alice@example.com','UTC',1)`)
+	if _, err := database.Exec(`INSERT INTO event_type_questions (id,event_type_id,label,type)
+		VALUES ('q1','et1','What should we discuss?','text')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`INSERT INTO booking_answers (id,booking_id,question_id,value)
+		VALUES ('answer1','b1','q1','The project scope')`); err != nil {
+		t.Fatal(err)
+	}
 
 	req := authReq(http.MethodPost, "/v1/bookings/b1/reassign", `{"host_id":"u3"}`, ownerKey)
 	req.SetPathValue("id", "b1")
@@ -30,6 +44,24 @@ func TestReassignBooking_movesHost(t *testing.T) {
 	database.QueryRow(`SELECT host_id FROM bookings WHERE id='b1'`).Scan(&hostID)
 	if hostID != "u3" {
 		t.Errorf("host_id = %q; want u3", hostID)
+	}
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	for {
+		select {
+		case msg := <-cap.messages:
+			if len(msg.To) == 0 || msg.To[0] != "h3@example.com" {
+				continue
+			}
+			for _, part := range []string{"What should we discuss?", "The project scope"} {
+				if !strings.Contains(msg.Text, part) || !strings.Contains(msg.HTML, part) {
+					t.Errorf("reassigned host email missing %q in text or HTML", part)
+				}
+			}
+			return
+		case <-deadline.C:
+			t.Fatal("timed out waiting for reassigned host email")
+		}
 	}
 }
 

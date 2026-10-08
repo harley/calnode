@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -45,6 +46,20 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (*Booking, error) 
 		return nil, fmt.Errorf("booking: begin tx: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck
+
+	// Read the current policy inside the creation transaction so every booking
+	// transport enforces it, even if settings changed since availability was loaded.
+	var blockedJSON string
+	if err := tx.QueryRowContext(ctx, "SELECT blocked_email_domains FROM event_types WHERE id = ?", p.EventTypeID).Scan(&blockedJSON); err != nil {
+		return nil, fmt.Errorf("booking: load email policy: %w", err)
+	}
+	var blocked []string
+	if err := json.Unmarshal([]byte(blockedJSON), &blocked); err != nil {
+		return nil, fmt.Errorf("booking: decode email policy: %w", err)
+	}
+	if err := CheckEmailDomain(p.Organizer.Email, blocked); err != nil {
+		return nil, err
+	}
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 

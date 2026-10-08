@@ -15,7 +15,7 @@ var (
 )
 
 // Who sends a booking's calendar invite to the booker (event_types/bookings.invite_delivery,
-// migration 00068).
+// migration 00071).
 const (
 	// InviteByCalendar: the booker is a guest on each host's calendar event, and the host's
 	// provider (Google, Microsoft) emails the invite from the host's own account.

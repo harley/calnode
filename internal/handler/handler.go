@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 
 	"github.com/calnode/calnode/internal/booking"
@@ -36,8 +37,10 @@ type Handler struct {
 	baseURL           string
 	publicBaseURL     string
 	dataDir           string
+	googleSettingsMu  sync.Mutex
 	authMu            sync.RWMutex
 	googleAuth        *oauth2.Config
+	googleVerifier    *oidc.IDTokenVerifier
 	microsoftAuth     *oauth2.Config
 	secureCookie      bool
 	llmMu             sync.RWMutex

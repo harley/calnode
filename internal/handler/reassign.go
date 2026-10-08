@@ -206,6 +206,12 @@ func (h *Handler) ReassignBooking(w http.ResponseWriter, r *http.Request) {
 		if err := h.loadHostIntoData(ctx, newHostID, &d); err != nil {
 			h.logger.Error("reassign: load new host", "error", err, "booking_id", bCopy.ID)
 		}
+		if answers, err := h.bookingAnswersForEmail(ctx, bCopy.ID); err != nil {
+			h.logger.Error("reassign: load booking answers", "error", err, "booking_id", bCopy.ID)
+		} else {
+			d.Answers = answers
+		}
+
 		// A Calnode-sent invite is re-issued (same UID, newer SEQUENCE) so the booker's
 		// calendar entry follows the change. A calendar-sent one needs nothing here: the
 		// new host's calendar invited the booker when the event was recreated above.
@@ -214,7 +220,7 @@ func (h *Handler) ReassignBooking(w http.ResponseWriter, r *http.Request) {
 			d.ICSSequence = int(time.Now().Unix())
 		}
 		prefs := h.hostPrefsOrDefault(ctx, bCopy.ID, newHostID)
-		if prefs.NotifyConfirmation {
+		if prefs.NotifyConfirmation || inviteMode == booking.InviteByCalnode {
 			if err := mailer.SendConfirmationToAttendee(ctx, h.mailer, d); err != nil {
 				h.logger.Error("reassign: email attendee", "error", err, "booking_id", bCopy.ID)
 			}

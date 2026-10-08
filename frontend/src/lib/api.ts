@@ -67,6 +67,7 @@ export type EventType = {
 	reminders: number[]; // hours_before values
 	routing_mode: 'fixed' | 'round_robin' | 'collective';
 	rr_strategy: 'even' | 'soonest' | 'priority';
+	blocked_email_domains: string[];
 	/** True when archived — hidden from the default list, is_active forced off. Reversible. */
 	archived?: boolean;
 	/** True if the current user owns this event type; false if they only host it (read-only). */
@@ -201,6 +202,8 @@ export type EmailSettings = {
 };
 
 export type GoogleSettings = {
+	signup_enabled: boolean;
+	signup_domains: string[];
 	client_id: string;
 	client_secret_set: boolean;
 	configured: boolean;

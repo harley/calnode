@@ -22,7 +22,7 @@
 	let smtpTLS = $state(false);
 	let smtpStartTLS = $state(true);
 	let emailFrom = $state('');
-	let emailFromName = $state('Calnode');
+	let emailFromName = $state('Book with CoderPush');
 	let resendApiKey = $state('');
 	// Distinct from "the field is blank": blank means keep the stored key, this means
 	// deliberately remove it and go back to SMTP.
@@ -60,7 +60,7 @@
 		smtpTLS = email.smtp_tls;
 		smtpStartTLS = email.smtp_starttls;
 		emailFrom = email.email_from;
-		emailFromName = email.email_from_name || 'Calnode';
+		emailFromName = email.email_from_name || 'Book with CoderPush';
 		rsvpAddress = email.rsvp_address ?? '';
 	}, 'Could not load email settings'));
 
@@ -147,7 +147,7 @@
 			<div class="mb-4 flex items-start justify-between gap-2">
 				<div>
 					<h2 class="text-sm font-semibold">Email</h2>
-					<p class="mt-0.5 text-xs text-muted-foreground">How Calnode sends booking emails.</p>
+					<p class="mt-0.5 text-xs text-muted-foreground">How CoderPush sends booking emails.</p>
 				</div>
 				{#if emailSettings !== null}
 					<span class="flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium {emailSettings.enabled ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}">
@@ -235,7 +235,7 @@
 					</div>
 					<div class="space-y-1.5">
 						<Label for="email-from-name">From name</Label>
-						<Input id="email-from-name" type="text" placeholder="Calnode" bind:value={emailFromName} />
+						<Input id="email-from-name" type="text" placeholder="Book with CoderPush" bind:value={emailFromName} />
 					</div>
 				</div>
 

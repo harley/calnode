@@ -25,6 +25,7 @@ import (
 const (
 	sqliteConstraintCheck      = 275  // SQLITE_CONSTRAINT_CHECK
 	sqliteConstraintForeignKey = 787  // SQLITE_CONSTRAINT_FOREIGNKEY
+	sqliteConstraintTrigger    = 1811 // SQLITE_CONSTRAINT_TRIGGER (also returned by ON DELETE RESTRICT)
 	sqliteConstraintPrimaryKey = 1555 // SQLITE_CONSTRAINT_PRIMARYKEY
 	sqliteConstraintUnique     = 2067 // SQLITE_CONSTRAINT_UNIQUE
 )
@@ -53,14 +54,23 @@ func IsCheckViolation(err error) bool {
 // IsForeignKeyViolation reports whether err is a foreign-key violation — a reference
 // to a row that does not exist, or a delete that would orphan one.
 func IsForeignKeyViolation(err error) bool {
+	// SQLite reports a direct missing reference as FOREIGNKEY (787), but an
+	// ON DELETE RESTRICT failure as TRIGGER (1811). Only treat the latter as a
+	// foreign-key failure when its message confirms that cause; other trigger
+	// failures should still reach the caller as unexpected database errors.
+	var sqliteErr *sqlite.Error
+	if errors.As(err, &sqliteErr) && sqliteErr.Code() == sqliteConstraintTrigger {
+		return strings.Contains(err.Error(), sqliteForeignKeyText)
+	}
 	return violates(err, sqliteForeignKeyText, sqliteConstraintForeignKey)
 }
 
 // violates classifies err: the driver's own error code when one is available, the
 // message only when it is not.
 //
-// A driver error is a DEFINITE answer in both directions. A *sqlite.Error whose code
-// does not match returns false and does not fall through to the text comparison —
+// A driver error is a definite answer except for SQLITE_CONSTRAINT_TRIGGER, which
+// IsForeignKeyViolation checks for the foreign-key message. Other *sqlite.Error
+// codes that do not match return false and do not fall through to the text comparison —
 // falling through would classify an error by whether its message happened to contain
 // an English phrase, which is the fragility being removed. It would also reintroduce
 // the primary-key trap in reverse: a 1555 error excluded by code would be readmitted

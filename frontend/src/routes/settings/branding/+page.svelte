@@ -198,7 +198,7 @@
 			<div class="mt-4 space-y-1.5">
 				<Label for="business-name">Business name</Label>
 				<Input id="business-name" bind:value={businessName} placeholder="Orchestratr" maxlength={200} />
-				<p class="text-xs text-muted-foreground">Used where there's no logo. Falls back to “Calnode” if left blank.</p>
+				<p class="text-xs text-muted-foreground">Used where there's no logo. Falls back to “Book with CoderPush” if left blank.</p>
 			</div>
 
 			<div class="mt-5 space-y-3">
@@ -289,7 +289,7 @@
 			<p class="mt-0.5 text-xs text-muted-foreground">
 				Links to your own privacy policy and terms. They appear in your public booking page footer, and
 				your privacy policy is linked from the cookie-consent banner. You're the data controller for
-				bookings made through your Calnode — these just point visitors to your policies.
+				bookings made through this app — these just point visitors to your policies.
 			</p>
 
 			<div class="mt-4 space-y-1.5">

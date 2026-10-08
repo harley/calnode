@@ -702,7 +702,6 @@
       var toggle = this.card.querySelector('.desc-toggle');
       if (toggle) toggle.addEventListener('click', function () { self.descExpanded = !self.descExpanded; self.syncDesc(); });
       this.wrap.appendChild(this.card);
-      this.wrap.appendChild(el('div', { class: 'powered', html: t(this.i18n, 'powered_by') + ' <a href="https://calnode.com" target="_blank" rel="noopener">Calnode</a>' }));
       this.applyStep();
       this.cw = this.wrap.getBoundingClientRect().width || this.cw;
       requestAnimationFrame(function () { self.syncDesc(); });

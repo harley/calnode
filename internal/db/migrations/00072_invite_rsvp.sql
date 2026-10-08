@@ -1,5 +1,5 @@
 -- +goose Up
--- RSVPs for invites Calnode sends itself (invite_delivery = 'calnode', migration 00068).
+-- RSVPs for invites Calnode sends itself (invite_delivery = 'calnode', migration 00071).
 --
 -- A booker's Yes/No/Maybe is an iTIP REPLY that their mail client emails to the invite's
 -- ORGANIZER. With Resend's inbound email configured, that organizer is a per-booking reply

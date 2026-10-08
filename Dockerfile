@@ -43,8 +43,11 @@ ARG VERSION=dev
 # images are deployable: they report version "dev", leaving nothing else to identify
 # the build by.
 ARG COMMIT=""
+# Railway supplies this for GitHub builds; prefer it so later pushes never report
+# a stale manually configured COMMIT value. CLI/local builds retain COMMIT.
+ARG RAILWAY_GIT_COMMIT_SHA=""
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build \
-    -ldflags="-s -w -X github.com/calnode/calnode/internal/buildinfo.Version=${VERSION} -X github.com/calnode/calnode/internal/buildinfo.Commit=${COMMIT}" \
+    -ldflags="-s -w -X github.com/calnode/calnode/internal/buildinfo.Version=${VERSION} -X github.com/calnode/calnode/internal/buildinfo.Commit=${RAILWAY_GIT_COMMIT_SHA:-${COMMIT}}" \
     -o calnode ./cmd/calnode
 
 # Download Litestream for the deployment target, matching TARGETARCH

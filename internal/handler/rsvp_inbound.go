@@ -17,7 +17,7 @@ import (
 	"github.com/calnode/calnode/internal/webhook"
 )
 
-// RSVP tracking for Calnode-sent invites (migration 00069).
+// RSVP tracking for Calnode-sent invites (migration 00072).
 //
 // A booker's Yes/No/Maybe is an iTIP REPLY their mail client emails to the invite's
 // ORGANIZER. When RSVP tracking is set up, that organizer is a private per-booking address

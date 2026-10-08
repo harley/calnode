@@ -3,6 +3,7 @@ package handler_test
 import (
 	"database/sql"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -398,4 +399,103 @@ func containsStr(s, sub string) bool {
 
 func strReader(s string) *strings.Reader {
 	return strings.NewReader(s)
+}
+
+func TestGoogleSignupPolicyPreservesEffectiveCredentials(t *testing.T) {
+	h, d, key := newGoogleHandler(t)
+	h.SetGoogleAuth("env-client", "env-secret", "http://localhost/v1/auth/callback", false)
+	rec := patchGoogleSettings(t, h, `{"signup_enabled":true,"signup_domains":[" EXAMPLE.COM ","example.com","other.example"]}`, key)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("policy patch: %d %s", rec.Code, rec.Body.String())
+	}
+	var got handlerGooglePolicy
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.Configured || !got.SecretSet || got.ClientID != "env-client" || !got.Enabled || len(got.Domains) != 2 || got.Domains[0] != "example.com" {
+		t.Fatalf("effective state: %+v", got)
+	}
+	var id, secret string
+	if err := d.QueryRow(`SELECT google_client_id,google_client_secret_enc FROM server_settings WHERE id=1`).Scan(&id, &secret); err != nil {
+		t.Fatal(err)
+	}
+	if id != "" || secret != "" {
+		t.Fatal("policy-only patch persisted env credentials")
+	}
+	login := httptest.NewRecorder()
+	h.LoginGoogle(login, httptest.NewRequest("GET", "/v1/auth/login", nil))
+	if login.Code != http.StatusFound {
+		t.Fatal("policy patch disabled Google login")
+	}
+	// Domain policy is persisted independently from the runtime credential config.
+	restarted := handler.New(d, slog.Default())
+	restarted.SetGoogleAuth("env-client", "env-secret", "http://localhost/v1/auth/callback", false)
+	reload := getGoogleSettings(t, restarted, key)
+	var again handlerGooglePolicy
+	json.Unmarshal(reload.Body.Bytes(), &again)
+	if !again.Enabled || len(again.Domains) != 2 {
+		t.Fatal("policy lost after handler restart")
+	}
+	// Invalid writes cannot partially change the existing enabled policy or ID.
+	for _, body := range []string{
+		`{"signup_enabled":true,"signup_domains":[]}`, `{"signup_domains":["*.example.com"]}`, `{"signup_domains":["https://example.com"]}`, `{"signup_domains":["@example.com"]}`, `{"signup_domains":["example..com"]}`, `{"signup_domains":["127.0.0.1"]}`,
+	} {
+		r := patchGoogleSettings(t, h, body, key)
+		if r.Code != http.StatusBadRequest {
+			t.Fatalf("%s: status=%d", body, r.Code)
+		}
+	}
+	preserved := getGoogleSettings(t, h, key)
+	var final handlerGooglePolicy
+	json.Unmarshal(preserved.Body.Bytes(), &final)
+	if !final.Enabled || final.ClientID != "env-client" || len(final.Domains) != 2 {
+		t.Fatal("invalid patch changed policy or credentials")
+	}
+	// Credential edits without policy fields preserve admission policy.
+	update := patchGoogleSettings(t, h, `{"client_id":"stored-client","client_secret":"new-secret"}`, key)
+	var updated handlerGooglePolicy
+	json.Unmarshal(update.Body.Bytes(), &updated)
+	if update.Code != 200 || !updated.Enabled || len(updated.Domains) != 2 {
+		t.Fatal("credential edit lost signup policy")
+	}
+}
+
+type handlerGooglePolicy struct {
+	ClientID   string   `json:"client_id"`
+	Configured bool     `json:"configured"`
+	SecretSet  bool     `json:"client_secret_set"`
+	Enabled    bool     `json:"signup_enabled"`
+	Domains    []string `json:"signup_domains"`
+}
+
+func TestAuthStatusGoogleSignupPolicy(t *testing.T) {
+	h, _, key := newGoogleHandler(t)
+	for _, step := range []struct {
+		body    string
+		enabled bool
+		domains int
+	}{
+		{`{"signup_enabled":true,"signup_domains":["example.com"]}`, false, 1},
+		{`{"client_id":"test-client","client_secret":"test-secret"}`, true, 1},
+		{`{"signup_enabled":false}`, false, 1},
+		{`{"signup_enabled":true}`, true, 1},
+		{`{"client_id":""}`, false, 1},
+	} {
+		patched := patchGoogleSettings(t, h, step.body, key)
+		if patched.Code != 200 {
+			t.Fatalf("patch status=%d", patched.Code)
+		}
+		rec := httptest.NewRecorder()
+		h.AuthStatus(rec, httptest.NewRequest("GET", "/v1/auth/status", nil))
+		var got struct {
+			Enabled bool     `json:"google_signup_enabled"`
+			Domains []string `json:"google_signup_domains"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		if rec.Code != 200 || got.Enabled != step.enabled || len(got.Domains) != step.domains {
+			t.Fatalf("auth status=%d %+v", rec.Code, got)
+		}
+	}
 }

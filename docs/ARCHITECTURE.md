@@ -546,7 +546,7 @@ CalDAV without iTIP scheduling (RFC 6638) does **not** auto-invite, so a future 
 provider would want the `.ics` — the rule is "no destination whose provider
 auto-delivers invites," not "no Google."
 
-**Who sends the invite: `invite_delivery` (migration 00068).** Per event type, copied onto
+**Who sends the invite: `invite_delivery` (migration 00071).** Per event type, copied onto
 each booking at creation. `calendar` (default) is everything above: the booker is a guest
 on each host's event and the provider invites them, from the host's own address.
 `calnode` writes the hosts' events **without guests** (`calendarInvitee` returns "", which
@@ -561,7 +561,7 @@ the **booking**, not the event type, so a booking is always updated through the 
 its invite went out on. Switching an event type to `calnode` requires email to be set up
 (validated on change).
 
-**RSVPs to Calnode-sent invites (migration 00069, `rsvp_inbound.go`).** A booker's
+**RSVPs to Calnode-sent invites (migration 00072, `rsvp_inbound.go`).** A booker's
 Yes/No/Maybe is an iTIP `REPLY` their mail client emails to the invite's `ORGANIZER`. Each
 booking's organizer address is fixed at its first send (`bookings.invite_organizer`,
 `bookingInviteOrganizer`), because clients match later updates by UID *and* organizer. With

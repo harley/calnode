@@ -451,6 +451,7 @@ var errPaymentRequired = errors.New("this event requires payment; please book on
 // the direct booking page (book.go) always had. A future caller now gets both is_active
 // and is_public enforced by construction, not by remembering to add the check.
 type bookableEventType struct {
+	BlockedEmailDomains []string
 	AllowPhoneCall      bool
 	ID                  string
 	UserID              string
@@ -484,21 +485,25 @@ type bookableEventType struct {
 // everywhere, not just hidden from its own page.
 func (h *Handler) loadBookableEventType(ctx context.Context, slug string) (*bookableEventType, error) {
 	var et bookableEventType
+	var blockedJSON string
 	var isActive, isPublic, showTaken int
 	err := h.db.QueryRowContext(ctx, `
 		SELECT id, user_id, name, duration_minutes, slot_interval_minutes,
 		       location_type, location_value, allow_phone_call, routing_mode, rr_strategy,
 		       buffer_before_minutes, buffer_after_minutes, min_notice_minutes, max_future_days,
 		       is_active, is_public, show_taken_slots, max_active_bookings, price_cents, currency,
-		       invite_delivery
+		       blocked_email_domains, invite_delivery
 		FROM event_types WHERE slug = ?`, slug).
 		Scan(&et.ID, &et.UserID, &et.Name, &et.DurationMinutes, &et.SlotIntervalMinutes,
 			&et.LocationType, &et.LocationValue, &et.AllowPhoneCall, &et.RoutingMode, &et.RRStrategy,
 			&et.BufferBeforeMinutes, &et.BufferAfterMinutes, &et.MinNoticeMinutes, &et.MaxFutureDays,
 			&isActive, &isPublic, &showTaken, &et.MaxActiveBookings, &et.PriceCents, &et.Currency,
-			&et.InviteDelivery)
+			&blockedJSON, &et.InviteDelivery)
 	if err != nil || isActive == 0 || isPublic == 0 {
 		return nil, errEventTypeNotFound
+	}
+	if err := json.Unmarshal([]byte(blockedJSON), &et.BlockedEmailDomains); err != nil {
+		return nil, err
 	}
 	et.ShowTakenSlots = showTaken != 0
 	return &et, nil
@@ -524,6 +529,9 @@ func (h *Handler) createBookingForSlug(ctx context.Context, slug string, startAt
 
 	et, err := h.loadBookableEventType(ctx, slug)
 	if err != nil {
+		return nil, err
+	}
+	if err := booking.CheckEmailDomain(organizer.Email, et.BlockedEmailDomains); err != nil {
 		return nil, err
 	}
 	// Paid events require the Stripe Checkout flow (booking page only) — agents/assistant
@@ -813,6 +821,11 @@ func (h *Handler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := booking.CheckEmailDomain(req.Email, et.BlockedEmailDomains); err != nil {
+		h.writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+
 	// Per-email throttle: cap how many bookings one email can create across the
 	// workspace in a rolling hour, independent of IP — backstops the per-IP rate
 	// limit against a single identity spamming via rotating IPs. Enforced inside
@@ -912,6 +925,10 @@ func (h *Handler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 		InviteDelivery:      et.InviteDelivery,
 	})
 	if err != nil {
+		if errors.Is(err, booking.ErrEmailDomainBlocked) {
+			h.writeError(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
 		if errors.Is(err, booking.ErrDoubleBooked) {
 			h.writeError(w, http.StatusConflict, "this slot is no longer available")
 			return
@@ -949,7 +966,7 @@ func (h *Handler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 			h.writeError(w, http.StatusServiceUnavailable, "payments are temporarily unavailable")
 			return
 		}
-		checkoutURL, err := h.startBookingCheckout(r.Context(), sc, b.ID, et.PriceCents, et.Currency, et.Name, req.EventTypeSlug, req.Email)
+		checkoutURL, err := h.startBookingCheckout(r.Context(), sc, b.ID, et.PriceCents, et.Currency, et.Name, req.Email)
 		if err != nil {
 			h.logger.ErrorContext(r.Context(), "create booking: start checkout", "error", err, "booking_id", b.ID)
 			_ = h.bookingSvc.CancelByID(r.Context(), b.ID, "checkout failed")
@@ -1327,17 +1344,23 @@ func (h *Handler) dispatchBookingConfirmation(b *booking.Booking, in bookingConf
 	if subjNote.Valid {
 		bData.SubjectOverride = subjNote.String
 	}
+	answers, answersErr := h.bookingAnswersForEmail(ctx, b.ID)
+	if answersErr != nil {
+		h.logger.Error("booking confirmation: load answers", "error", answersErr, "booking_id", b.ID)
+	} else {
+		bData.Answers = answers
+	}
 
 	meetURL, autoGenMeet, livekitHostURL := h.mintMeetingLink(ctx, b, in, &bData, hosts)
 	primaryPrefs, hostFailed := h.createHostEventsAndNotify(ctx, b, in, &bData, hosts, meetURL, autoGenMeet, livekitHostURL)
 
-	// Attendee confirmation, once. "With:" names the primary host; gated on the
-	// primary host's notification preference (matches prior behaviour).
+	// Attendee confirmation, once. "With:" names the primary host. In Calnode
+	// invite mode this email is the booker's only calendar invitation.
 	bData.HostName, bData.HostEmail = primaryHost(hosts).Name, primaryHost(hosts).Email
 	h.applyInviteDelivery(ctx, &bData, b.InviteDelivery, b.HostID)
 	bData.ICSSequence = int(b.UpdatedAt.Unix())
 	confirmFailed := hostFailed
-	if primaryPrefs.NotifyConfirmation {
+	if primaryPrefs.NotifyConfirmation || b.InviteDelivery == booking.InviteByCalnode {
 		if err := sendWithRetry(ctx, h.logger, b.ID, "attendee", func() error {
 			return mailer.SendConfirmationToAttendee(ctx, h.mailer, bData)
 		}); err != nil {
@@ -1793,7 +1816,7 @@ func (h *Handler) cancelSideEffects(b booking.Booking) {
 	}
 	h.applyInviteDelivery(ctx, &d, b.InviteDelivery, b.HostID)
 	d.ICSSequence = int(b.UpdatedAt.Unix())
-	if primaryPrefs.NotifyCancellation {
+	if primaryPrefs.NotifyCancellation || b.InviteDelivery == booking.InviteByCalnode {
 		if err := mailer.SendCancellationToAttendee(ctx, h.mailer, d); err != nil {
 			h.logger.Error("booking cancellation email (attendee)", "error", err, "booking_id", b.ID)
 		}

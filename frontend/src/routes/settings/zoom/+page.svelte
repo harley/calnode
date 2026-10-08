@@ -136,7 +136,7 @@
 				<div class="mt-4 rounded-md bg-amber-50 px-3 py-2.5 text-xs text-amber-800 ring-1 ring-inset ring-amber-200">
 					<span class="font-medium">Multi-member limit:</span> only Zoom users on the same Zoom
 					account as this app's owner can connect an unpublished app — members elsewhere are
-					refused by Zoom before Calnode is involved. Options:
+					refused by Zoom before CoderPush is involved. Options:
 					<a href="https://github.com/Calnode/calnode/blob/main/docs/ZOOM.md" target="_blank" rel="noopener noreferrer" class="font-medium underline">docs/ZOOM.md</a>
 					(built-in video needs no Zoom app at all).
 				</div>

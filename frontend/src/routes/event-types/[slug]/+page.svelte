@@ -24,7 +24,7 @@
 		{ value: 'zoom',         label: 'Zoom' },
 		{ value: 'teams',        label: 'Microsoft Teams' },
 		{ value: 'google_meet',  label: 'Google Meet' },
-		{ value: 'livekit',      label: 'Calnode Video (LiveKit)' },
+		{ value: 'livekit',      label: 'CoderPush Video (LiveKit)' },
 		{ value: 'phone',        label: 'Phone call' },
 		{ value: 'link',         label: 'Video link' },
 		{ value: 'in_person',    label: 'In person' },
@@ -103,6 +103,7 @@
 	];
 	type Strategy = 'even' | 'priority' | 'soonest';
 	let rrStrategy = $state<Strategy>('even');
+	let blockedEmailDomains = $state('');
 
 	type Host = { user_id: string; name: string; email: string };
 	type TogetherHost = Host & { optional: boolean };
@@ -275,7 +276,7 @@
 	let testError   = $state<Partial<Record<MsgKey, string>>>({});
 
 	let allowPhoneCall = $state(false);
-	const slug = $page.params.slug;
+	const slug = $derived($page.params.slug);
 
 	async function loadET() {
 		etError = '';
@@ -307,6 +308,7 @@
 			if (et.routing_mode === 'round_robin') { hostScope = 'people'; staffing = 'rotate'; }
 			else if (et.routing_mode === 'collective') { hostScope = 'people'; staffing = 'together'; }
 			else { hostScope = 'me'; }
+			blockedEmailDomains = (et.blocked_email_domains ?? []).join(', ');
 			rrStrategy = (['even', 'priority', 'soonest'].includes(et.rr_strategy ?? '')
 				? et.rr_strategy : 'even') as Strategy;
 			msg_confirmation = et.msg_confirmation ?? '';
@@ -363,6 +365,7 @@
 				currency: form.currency.trim().toLowerCase() || 'usd',
 				routing_mode: routingMode,
 				rr_strategy: rrStrategy,
+				blocked_email_domains: blockedEmailDomains.split(/[\s,]+/).filter(Boolean),
 				reminders,
 				// Not `|| null`: this form always saves the whole page state, so a blanked
 				// field must send '' to actually clear it. The API treats null as "leave
@@ -403,7 +406,6 @@
 			// leaving it in history is a back button that breaks.
 			if (effSlug !== slug) {
 				await goto(`${base}/event-types/${effSlug}`, { replaceState: true });
-				return;
 			}
 			await loadET();
 			await loadHosts();
@@ -446,13 +448,13 @@
 
 		switch (type) {
 			case 'confirmation':
-				return `Hi Alex Johnson,\n\nYour booking has been confirmed.\n\nEvent:    ${name}\nWith:     ${et?.name ?? 'Host'}\nStart:    ${start}\nEnd:      ${end}${loc}\n\nBooking reference: preview-test\n\nTo cancel, visit:\n[booking page]${noteBlk}\n— Calnode`;
+				return `Hi Alex Johnson,\n\nYour booking has been confirmed.\n\nEvent:    ${name}\nWith:     ${et?.name ?? 'Host'}\nStart:    ${start}\nEnd:      ${end}${loc}\n\nBooking reference: preview-test\n\nTo cancel, visit:\n[booking page]${noteBlk}\n— Book with CoderPush`;
 			case 'cancellation':
-				return `Hi Alex Johnson,\n\nYour booking has been cancelled.\n\nEvent:    ${name}\nWith:     ${et?.name ?? 'Host'}\nStart:    ${start}\nEnd:      ${end}\n\nTo rebook, visit:\n[booking page]${noteBlk}\n— Calnode`;
+				return `Hi Alex Johnson,\n\nYour booking has been cancelled.\n\nEvent:    ${name}\nWith:     ${et?.name ?? 'Host'}\nStart:    ${start}\nEnd:      ${end}\n\nTo rebook, visit:\n[booking page]${noteBlk}\n— Book with CoderPush`;
 			case 'reschedule':
-				return `Hi Alex Johnson,\n\nYour booking has been rescheduled.\n\nEvent:    ${name}\nWith:     ${et?.name ?? 'Host'}\nWas:      ${prev}\nNow:      ${start}\nEnd:      ${end}${loc}\n\nBooking reference: preview-test${noteBlk}\n— Calnode`;
+				return `Hi Alex Johnson,\n\nYour booking has been rescheduled.\n\nEvent:    ${name}\nWith:     ${et?.name ?? 'Host'}\nWas:      ${prev}\nNow:      ${start}\nEnd:      ${end}${loc}\n\nBooking reference: preview-test${noteBlk}\n— Book with CoderPush`;
 			case 'reminder':
-				return `Hi Alex Johnson,\n\nThis is a reminder that your booking is coming up.\n\nEvent:    ${name}\nWith:     ${et?.name ?? 'Host'}\nStart:    ${start}\nEnd:      ${end}${loc}\n\nBooking reference: preview-test${noteBlk}\n— Calnode`;
+				return `Hi Alex Johnson,\n\nThis is a reminder that your booking is coming up.\n\nEvent:    ${name}\nWith:     ${et?.name ?? 'Host'}\nStart:    ${start}\nEnd:      ${end}${loc}\n\nBooking reference: preview-test${noteBlk}\n— Book with CoderPush`;
 		}
 	}
 
@@ -507,7 +509,7 @@
 	</div>
 {/snippet}
 
-<svelte:head><title>{et?.name ?? slug} — Event Type — Calnode</title></svelte:head>
+<svelte:head><title>{et?.name ?? slug} — Event Type — Book with CoderPush</title></svelte:head>
 <svelte:window onkeydown={saveOnCmdS(saveET, () => !etSaving)} />
 
 <div class="mb-8">
@@ -595,9 +597,9 @@
 					<Input id="et-slug" bind:value={form.slug} />
 				</div>
 				<p class="text-xs text-muted-foreground">
-					Editable until the first booking, after which the links are already in
-					circulation. Mainly useful right after duplicating, where the copy arrives
-					with <code>-copy</code> on the end.
+					You can change this link even after bookings exist. Old booking URLs stop
+					working, so update shared links and embeds. Existing bookings and their
+					manage links keep working.
 				</p>
 			</div>
 			<div class="space-y-1.5">
@@ -793,6 +795,11 @@
 					<Label for="et-future">Booking window (days)</Label>
 					<Input id="et-future" type="number" min="0" bind:value={form.max_future_days} />
 					<p class="text-xs text-muted-foreground">How far ahead people can book. 0 = unlimited</p>
+				</div>
+				<div class="space-y-1.5">
+					<Label for="et-blocked-domains">Blocked email domains</Label>
+					<Input id="et-blocked-domains" bind:value={blockedEmailDomains} placeholder="gmail.com, hotmail.com" />
+					<p class="text-xs text-muted-foreground">Separate domains with commas. These domains and their subdomains cannot book this event. Leave blank to allow all domains.</p>
 				</div>
 				<div class="space-y-1.5">
 					<Label for="et-max-active">Max active bookings per person</Label>

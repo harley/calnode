@@ -406,6 +406,59 @@ func TestInviteDelivery_reassignKeepsBothHostsPrivate(t *testing.T) {
 	}
 }
 
+// A Calnode invite is the booker's only calendar notification. Host email
+// preferences must not suppress its creation, update, or cancellation.
+func TestInviteDelivery_calnodeInvitesIgnoreHostEmailPreferences(t *testing.T) {
+	f := newInviteFixture(t, true)
+	if _, err := f.h.db.Exec(`UPDATE users SET notify_confirmation = 0,
+		notify_reschedule = 0, notify_cancellation = 0 WHERE email = ?`, inviteHostEmail); err != nil {
+		t.Fatal(err)
+	}
+	if rec := f.createEventType(t, "intro", booking.InviteByCalnode); rec.Code != http.StatusCreated {
+		t.Fatalf("create event type: %d — %s", rec.Code, rec.Body.String())
+	}
+	id, confirmation := f.book(t, "intro")
+	assertWorkspaceInvite(t, "confirmation", icsOf(confirmation), "REQUEST", inviteHostEmail)
+
+	b, err := f.h.bookingSvc.Get(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newStart := b.StartAt.Add(24 * time.Hour)
+	updated, err := f.h.bookingSvc.Reschedule(context.Background(), id, newStart, newStart.Add(30*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.h.rescheduleSideEffects(*updated, b.EventTypeID, b.StartAt, b.EndAt)
+	assertWorkspaceInvite(t, "reschedule", icsOf(f.waitFor(t, inviteBookerEmail, 2)), "REQUEST", inviteHostEmail)
+
+	const newHostEmail = "colleague@host.example"
+	if _, err := f.h.db.Exec(`INSERT INTO users
+		(id, email, name, iana_timezone, is_admin, notify_confirmation, created_at)
+		VALUES ('host-2', ?, 'Colleague', 'UTC', 0, 0, '2026-01-01T00:00:00Z')`, newHostEmail); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/bookings/"+id+"/reassign", strings.NewReader(`{"host_id":"host-2"}`))
+	req.SetPathValue("id", id)
+	req.Header.Set("X-API-Key", f.apiKey)
+	rec := httptest.NewRecorder()
+	f.h.RequireAuth(f.h.ReassignBooking)(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reassign: %d — %s", rec.Code, rec.Body.String())
+	}
+	assertWorkspaceInvite(t, "reassign", icsOf(f.waitFor(t, inviteBookerEmail, 3)), "REQUEST", inviteHostEmail, newHostEmail)
+
+	if err := f.h.bookingSvc.CancelByID(context.Background(), id, "changed plans"); err != nil {
+		t.Fatal(err)
+	}
+	cancelled, err := f.h.bookingSvc.Get(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.h.cancelSideEffects(*cancelled)
+	assertWorkspaceInvite(t, "cancellation", icsOf(f.waitFor(t, inviteBookerEmail, 4)), "CANCEL", inviteHostEmail, newHostEmail)
+}
+
 // The reconciler re-creates a host event whose inline create failed; for a Calnode
 // booking it must not add the booker, or the provider would invite them after all.
 func TestInviteDelivery_reconcilerHealsWithoutInvitingBooker(t *testing.T) {

@@ -97,6 +97,17 @@ func TestConstraintPredicates(t *testing.T) {
 		assertOnly(t, err, "foreign key", db.IsForeignKeyViolation)
 	})
 
+	t.Run("foreign key via delete restrict", func(t *testing.T) {
+		if _, err := database.Exec(`
+			INSERT INTO bookings (id, event_type_id, host_id, start_at, end_at, status)
+			VALUES ('b-history', ?, ?, '2026-06-15T10:00:00Z', '2026-06-15T10:30:00Z', 'cancelled')`,
+			etID, userID); err != nil {
+			t.Fatalf("seed booking history: %v", err)
+		}
+		_, err := database.Exec(`DELETE FROM event_types WHERE id = ?`, etID)
+		assertOnly(t, err, "foreign key via delete restrict", db.IsForeignKeyViolation)
+	})
+
 	t.Run("unrelated error", func(t *testing.T) {
 		// A predicate that answered true for everything would satisfy every caller
 		// above and be badly wrong, so the negative cases carry as much weight.

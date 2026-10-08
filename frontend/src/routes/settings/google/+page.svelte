@@ -4,6 +4,7 @@
 	import { currentUser } from '$lib/stores';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
+	import { Switch } from '$lib/components/ui/switch';
 	import { Label } from '$lib/components/ui/label';
 	import { toast } from 'svelte-sonner';
 	import { saveOnCmdS } from '$lib/save-shortcut';
@@ -15,6 +16,8 @@
 	let googleSettings = $state<GoogleSettings | null>(null);
 	let clientID = $state('');
 	let clientSecret = $state('');
+	let signupEnabled = $state(false);
+	let signupDomains = $state('');
 
 	// Host the server builds its OAuth redirect URIs from. Prefer the server's
 	// configured base_url so the displayed URIs match exactly what we send to
@@ -37,15 +40,24 @@
 	onMount(() => loadingFlag.run(async () => {
 		googleSettings = await api.get<GoogleSettings>('/v1/settings/google');
 		clientID = googleSettings.client_id;
+		signupEnabled = googleSettings.signup_enabled;
+		signupDomains = googleSettings.signup_domains.join(', ');
 	}, 'Could not load Google settings'));
 
 	async function save() {
 		await savingFlag.run(async () => {
-			const body: Record<string, unknown> = { client_id: clientID };
+			const body: Record<string, unknown> = {
+				signup_enabled: signupEnabled,
+				signup_domains: signupDomains.split(',').map((d) => d.trim()).filter(Boolean)
+			};
+			if (clientID !== googleSettings?.client_id) body.client_id = clientID;
 			if (clientSecret) body.client_secret = clientSecret;
 			googleSettings = await api.patch<GoogleSettings>('/v1/settings/google', body);
 			clientSecret = '';
-			toast.success('Saved — go to Calendar to connect your account');
+			clientID = googleSettings.client_id;
+			signupEnabled = googleSettings.signup_enabled;
+			signupDomains = googleSettings.signup_domains.join(', ');
+			toast.success('Google settings saved');
 		}, 'Could not save Google settings');
 	}
 </script>
@@ -63,7 +75,7 @@
 
 		{#if originMismatch}
 			<div class="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-				<p class="font-medium">This page is being viewed at a different domain than Calnode is configured for</p>
+				<p class="font-medium">This page is being viewed at a different domain than CoderPush is configured for</p>
 				<p class="mt-1 text-amber-800">
 					You're browsing <code class="rounded bg-amber-100 px-1 font-mono">{browserOrigin}</code>, but this
 					server's <code class="rounded bg-amber-100 px-1 font-mono">BASE_URL</code> is set to
@@ -123,7 +135,7 @@
 						Click <span class="font-medium">Create</span>. Copy the Client ID and Client Secret shown.
 						{#if !isLocal}
 							<p class="mt-1.5 text-xs text-muted-foreground">
-								If you also run Calnode locally, add the
+								If you also run CoderPush locally, add the
 								<code class="rounded bg-muted px-1">http://localhost:3000/…</code> variants of both URIs too.
 							</p>
 						{/if}
@@ -177,12 +189,27 @@
 					<code class="mt-1 block rounded bg-muted px-2 py-1 text-xs font-mono break-all">{redirectBase}/v1/auth/callback</code>
 					{#if !isLocal}
 						<p class="mt-1.5 text-xs text-muted-foreground">
-							If you also run Calnode locally, add the
+							If you also run CoderPush locally, add the
 							<code class="rounded bg-muted px-1">http://localhost:3000/…</code> variants too.
 						</p>
 					{/if}
 				</div>
 			{/if}
+
+			<div class="mt-5 space-y-3 border-t pt-4">
+				<h2 class="text-sm font-semibold">Workspace self-service</h2>
+				<div class="flex items-center gap-3">
+					<Switch id="g-signup" bind:checked={signupEnabled} />
+					<Label for="g-signup">Allow company Google accounts to join</Label>
+				</div>
+				<div class="space-y-1.5">
+					<Label for="g-domains">Allowed Workspace domains</Label>
+					<Input id="g-domains" bind:value={signupDomains} placeholder="company.com, other-company.com" />
+					<p class="text-xs text-muted-foreground">Enter exact domains separated by commas. Google must verify the Workspace account and its email domain.</p>
+				</div>
+				<p class="text-xs text-muted-foreground">New users become Members. Each person connects their own calendar and sets working hours. Team membership stays explicit.</p>
+				<p class="text-xs text-muted-foreground">Turning this off stops new signups. Archive a member to remove their existing access.</p>
+			</div>
 
 			<div class="mt-5">
 				<Button onclick={save} disabled={savingFlag.active}>
