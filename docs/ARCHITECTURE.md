@@ -776,6 +776,13 @@ booking status, free the slot, refund a payment or send cancellation notificatio
 Secondary hosts' calendar copies do not decide cancellation. Bookings without a
 recorded primary-host event and providers without cancellation-read support retain
 the existing reminder behavior. Only Google currently implements this check.
+Saving or clearing Google credentials replaces only the Google provider using a
+fresh calendar-service snapshot; Microsoft/CalDAV registrations and an existing
+non-Google primary provider survive without a restart. In-flight operations keep
+the previous snapshot. Clearing Google credentials still leaves Google reminders
+unverifiable, so they follow the same retry/failure policy rather than sending
+without a cancellation check.
+
 The recorded calendar rescues destination changes within an account; changing to
 another account can still make the event inaccessible and fail its reminder job.
 

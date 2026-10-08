@@ -168,7 +168,7 @@ func (h *Handler) PatchGoogleSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	credentialsChanged := req.ClientID != nil || (req.ClientSecret != nil && *req.ClientSecret != "")
 	var resolvedSecret string
-	var svc *calendar.Service
+	var googleProvider calendar.Provider
 	if credentialsChanged {
 		// A secret-only update of env credentials intentionally saves the effective ID.
 		if clientID == "" {
@@ -204,8 +204,7 @@ func (h *Handler) PatchGoogleSettings(w http.ResponseWriter, r *http.Request) {
 					h.writeError(w, http.StatusInternalServerError, "failed to initialize calendar client")
 					return
 				}
-				svc = calendar.NewService(h.db)
-				svc.Register(gc)
+				googleProvider = gc
 			}
 		}
 	}
@@ -218,7 +217,7 @@ func (h *Handler) PatchGoogleSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if credentialsChanged {
-		h.SetCalendar(svc)
+		h.setGoogleCalendar(googleProvider)
 		if clientID == "" {
 			h.authMu.Lock()
 			h.googleAuth, h.googleVerifier = nil, nil
